@@ -10,6 +10,7 @@ It runs as a single Docker container. It was written for a Synology NAS (a DS420
 - **The display does the final dithering:** the NAS crops and tones the photo, and the panel's own algorithm turns it into ink dots. A NAS-side ditherer is included as `DITHER=local`, but on the EM32DX the panel's own processing looked better.
 - **Deep sleep between photos:** in playlist mode the display changes the photo itself every night and sleeps deeply in between. It comes online briefly after each change, and that is when the NAS checks the battery and sends the next batch of photos.
 - **Several frames:** one service can look after more than one display, each with its own settings, album round and page.
+- **Pictures from a prompt:** describe a picture on the web page and Google's image model draws it for the frame, as a one-off or to keep among the album's photos (optional; needs a Google API key).
 
 What we found out about the EM32DX along the way (sleep, wake-up, playlists, dithering): [docs/findings.md](docs/findings.md).
 
@@ -81,7 +82,30 @@ The same status is available as JSON at `/api/status` (`?frame=<name>` with seve
 
 **Notifications.** With `NOTIFY_URL` set, the NAS posts a line of text there when a frame needs a hand (it missed a change, its battery is below 20%, it won't go into deep sleep) and when it is fine again. It is made for [ntfy](https://ntfy.sh): pick a topic name nobody will guess, subscribe to it in the ntfy app, and set `NOTIFY_URL=https://ntfy.sh/<your-topic>` (or the address of your own ntfy server). Nothing leaves the NAS unless it is set.
 
-## 6. Settings (`.env`)
+## 6. Pictures from a prompt
+
+The **Generate** tab makes a picture from a description and puts it on the frame. Google's image model draws it, so this needs an API key, and each picture is paid for (about 5 dollar cents at the default size, November 2026).
+
+**Setting it up**
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com/) (*Get API key*), in a project with billing switched on: Google's image models are not in the free tier.
+2. In `.env`, set `GEMINI_API_KEY` to that key and `UI_PASSWORD` to a password for the page, and restart the project. Without a page password no pictures are made: anyone on your network could otherwise spend your money.
+
+**Using it** (`http://<NAS-IP>:8321/#generate`)
+
+- Describe the picture, pick a style (or none) and press **Generate**. Half a minute or so later it is in the gallery below, as it will go to the display, with its description. Nothing is sent to the frame yet.
+- The styles (linocut, travel poster, Japanese woodblock, paper cut-out…) are ones that suit six inks: bold shapes and flat colour come out better on the panel than soft photographs.
+- **Show on the frame** shows a picture for one day, in the place of a photo.
+  - Playlist mode with deep sleep: if the display is awake (press its power button first), it changes within a minute. If it is asleep, the picture takes the place of the photo for the next change: that morning the display first changes to the photo it had planned and, a minute later, to the picture. The photo that lost its day comes the day after.
+  - Push mode: the picture goes to the display at once, or when the NAS next finds it awake.
+- **Keep in rotation** adds a picture to the photos the frame picks from: it comes up once per round of the album, like any photo. Untick it to take it out again.
+- The gallery keeps the last hundred pictures, and those kept in the rotation on top of that. They live in the data volume, under `generated/`.
+
+**What goes to Google:** your description, the style and the frame's shape, with the request not to store them. Nothing about your photos or your display. Google marks every picture with an invisible watermark (SynthID).
+
+**Costs:** `GENERATE_DAILY_MAX` (20) caps the requests per day; the tab shows the count. A request that Google refuses outright (wrong key, no quota) is not counted; one that reached the model is, picture or not. `GENERATE_SIZE=1K` is cheaper (about 3 cents) and gets enlarged for the EM32DX; the default `2K` is a little larger than its panel.
+
+## 7. Settings (`.env`)
 
 | Variable | Default | |
 |---|---|---|
@@ -111,6 +135,9 @@ The same status is available as JSON at `/api/status` (`?frame=<name>` with seve
 | `GAMMA`, `SHARPEN` | 1.0, 0.8 | Midtone lift and sharpening |
 | `DITHER_METHOD`, `PALETTE`, `OUTPUT_COLORS` | bluenoise, measured, device | `DITHER=local` only: `diffusion` (with `DITHER_KERNEL`), measured ink colours as JSON, and which colours to write into the PNG |
 | `UI_PASSWORD` | — | Protects the web page (basic auth) |
+| `GEMINI_API_KEY` | — | A Google AI Studio API key: turns on the Generate tab (together with `UI_PASSWORD`) |
+| `GENERATE_MODEL`, `GENERATE_SIZE` | gemini-nano-banana-2.1, 2K | The image model, and the size it draws at (`1K`, `2K` or `4K`) |
+| `GENERATE_DAILY_MAX` | 20 | Requests to Google per day, at most |
 | `NOTIFY_URL` | — | Where to post a line when a frame needs a hand (an ntfy topic address) |
 | `FRAMES`, `FRAME_NAME` | —, Photo frame | Several frames: their names (see below). One frame: its name on the page |
 
@@ -131,9 +158,9 @@ KITCHEN_ALBUM_URLS=https://photos.app.goo.gl/...  # its own album
 KITCHEN_SCHEDULE=30 7 * * *
 ```
 
-Each frame keeps its own state (its round of the album, its playlist, its history) in the data volume under `frames/<name>`, and has its own page (`?frame=kitchen`). The web server, its port and password, and the time zone of the log are shared. When you go from one frame to several, the first name in `FRAMES` takes over the state of the frame you had, so put that one first and keep it there. The log says which frame each line is about. Commands take `--frame <name>`.
+Each frame keeps its own state (its round of the album, its playlist, its history, its generated pictures) in the data volume under `frames/<name>`, and has its own page (`?frame=kitchen`). The web server, its port and password, and the time zone of the log are shared. When you go from one frame to several, the first name in `FRAMES` takes over the state of the frame you had, so put that one first and keep it there. The log says which frame each line is about. Commands take `--frame <name>`.
 
-## 7. Commands
+## 8. Commands
 
 Run them on the NAS with `sudo docker exec emdx-photo-frame node src/index.js <command>`:
 
@@ -147,15 +174,16 @@ Run them on the NAS with `sudo docker exec emdx-photo-frame node src/index.js <c
 
 To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-photo-frame . && docker run --rm -p 8321:8321 --env-file .env -e EMDX_HOST= -v "$PWD/data:/data" emdx-photo-frame`, then open http://localhost:8321.
 
-## 8. How it works
+## 9. How it works
 
 1. **Album.** Google closed the Photos Library API for existing albums in March 2025, and its alternatives are pick-by-hand or partner-only. So this reads the album the way its public web page does: the first page of items is embedded in the HTML, and later pages come from the same endpoint the page uses. This is unofficial and may break if Google changes the page; the last good list is cached meanwhile. Videos are skipped.
 2. **Layout.** libvips' attention-based smart crop (sharp), with EXIF orientation honoured. Pairs split the frame in proportion to the photos' shapes, so both lose about the same amount. Faces are found on the NAS with [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) (OpenCV's detector, MIT, in `models/`) on ONNX Runtime's WebAssembly build: once over the whole photo and once in overlapping tiles, for the small faces of a group shot. When the attention crop already holds every face with room to spare it stays; otherwise the crop moves, a pair's split shifts towards the photo that needs the room, and as a last resort (`FACES=keep`) the photo is cropped less and gets a white band. Faces much smaller than the largest one count as passers-by and are ignored.
 3. **Tone.** Gentle auto-levels, an S-curve and optionally a saturation boost, in Oklab.
 4. **Dither.** By default the display dithers the toned photo itself. With `DITHER=local` the NAS maps colours into the gamut of the six measured inks and dithers with a blue-noise mask, writing pure ink colours into the PNG.
 5. **Sending.** The NAS connects with Samsung MDC (TLS + PIN) and points the display at a small JSON manifest on its own web server; the display downloads it and the images in it. A playlist is the same manifest with several images, each with its own display time in milliseconds, as Samsung's E-Paper app sends it. The trick and the MDC client come from [node-samsung-emdx](https://github.com/WeeJeWel/node-samsung-emdx) and [@weejewel/samsung-mdc](https://github.com/WeeJeWel/node-samsung-mdc) by Emile Nijssen; the playlist format from Samsung's Android app.
+6. **Pictures from a prompt.** One request to the Gemini API's Interactions endpoint, asking for an image in the shape closest to the frame's (9:16 for a portrait EM32DX). The picture is kept as Google sent it and goes through the same crop, tone and dither steps as a photo whenever it is shown. In playlist mode a one-off takes a slot in the plan, so it reaches the display with the next playlist.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **"accepted the command but never downloaded"**: the display can't reach `http://SERVER_HOST:HTTP_PORT`. Check `SERVER_HOST`, the DSM firewall, and that the display and the NAS are on the same network.
 - **"Incorrect PIN"**: check `EMDX_PIN`. After several wrong PINs the display may block MDC for a while.
@@ -167,6 +195,7 @@ To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-phot
 - **"Could not connect"** (push mode): the display is asleep or offline. Check `EMDX_MAC`, its battery, and run `sleep-test`; try `WOL_BROADCAST` set to your network's broadcast address.
 - **"The display did not go to sleep"**: it took the power-off command but kept answering, so it is using battery. The NAS tries again at every sleep check.
 - **Album errors**: run `check-album`. If it fails while the link opens fine in a browser, Google probably changed the page format; the frame keeps using the cached list meanwhile.
+- **"No picture"** on the Generate tab: the line says what Google answered. *Refused the API key*: check `GEMINI_API_KEY`. *Refused the request … billing*: switch on billing for the key's project in Google AI Studio. *Quota is used up*: wait, or raise the limits there. *Sent no picture*: the model or its safety filter declined; say it differently.
 - **Photos too dark or flat on the panel**: try `SATURATION=1.15`, `CONTRAST=0.2` or `GAMMA=1.15`.
 
 Logs: Container Manager → Container → emdx-photo-frame → Log.
@@ -178,7 +207,7 @@ npm install
 npm test     # unit tests, and end-to-end runs against a fake EMDX and a mock album (needs openssl)
 ```
 
-The code, by subject: `app.js` (one frame: its lock, push mode, status), `daily.js` and `playlist.js` (playlist mode and its timing), `library.js` (album, picking, rendering), `sleep.js`, `checks.js` and `cleaning.js` (sleep, the periodic looks at the display, the panel cleaning), `display.js` (Samsung MDC), `server.js` and `ui.js` (the web server and page), `config.js` (settings, frames).
+The code, by subject: `app.js` (one frame: its lock, push mode, status), `daily.js` and `playlist.js` (playlist mode and its timing), `library.js` (album, picking, rendering), `sleep.js`, `checks.js` and `cleaning.js` (sleep, the periodic looks at the display, the panel cleaning), `display.js` (Samsung MDC), `server.js` and `ui.js` (the web server and page), `art.js` and `sources/gemini.js` (pictures from a prompt), `config.js` (settings, frames).
 
 The fake display (`test/helpers/fakeEmdx.js`) speaks MDC over TLS, downloads content like the real one, plays playlists, sleeps, and wakes on Wake-on-LAN or after a playlist change.
 

@@ -13,6 +13,7 @@ import { Library } from './library.js';
 import { Sleep } from './sleep.js';
 import { Cleaning } from './cleaning.js';
 import { Checks } from './checks.js';
+import { Art } from './art.js';
 
 const DAY = 24 * 3600 * 1000;
 const LOW_BATTERY = 20; // percent
@@ -356,6 +357,7 @@ export class FrameApp {
       lastError: st.lastError || null,
       history: st.history.slice(0, 10),
       testPattern: st.testPattern || null,
+      generate: this.artStatus(),
       dither: this.cfg.image.dither,
       sleep: this.cfg.display.host ? this.sleepStatus() : null,
       deepSleep: st.deepSleep || null,
@@ -429,7 +431,7 @@ export function upgradeState(st) {
 }
 
 // FrameApp's methods live in several files, by subject: add them to the class.
-for (const part of [Library, Sleep, Cleaning, Checks]) {
+for (const part of [Library, Sleep, Cleaning, Checks, Art]) {
   for (const name of Object.getOwnPropertyNames(part.prototype)) {
     if (name !== 'constructor') Object.defineProperty(FrameApp.prototype, name, Object.getOwnPropertyDescriptor(part.prototype, name));
   }

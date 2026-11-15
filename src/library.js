@@ -48,6 +48,10 @@ export class Library {
       for (const it of files) items.push({ ...it, source: 'folder', album: 'Folder' });
       albums.push({ url: cfg.photoDir, title: 'Folder', count: files.length });
     }
+    // Pictures made from a prompt that were kept in the rotation (art.js).
+    const kept = this.keptArt?.() ?? [];
+    items.push(...kept);
+    if (kept.length) albums.push({ url: 'generated', title: 'Generated', count: kept.length });
     if (!items.length) {
       throw new Error(errors.length ? errors.join(' | ') : 'No photos found. Set ALBUM_URLS (and/or PHOTO_DIR).');
     }
@@ -90,10 +94,25 @@ export class Library {
     if (!inputs) throw new Error('Could not download any photo (see log)');
 
     say('Cropping and dithering');
+    const out = await this.writeRender(dir, plan, inputs);
+    log.info(`Rendered ${plan.kind} (${plan.items.length} photo${plan.items.length > 1 ? 's' : ''}) in ${out.ms} ms`);
+    return {
+      renderedAt: Date.now(),
+      kind: plan.kind,
+      ids: plan.items.map((it) => it.id),
+      items: plan.items.map((it) => ({ id: it.id, takenAt: it.takenAt, source: it.source, album: it.album, ...(it.title ? { title: it.title } : {}) })),
+      inkShare: out.inkShare,
+    };
+  }
+
+  // Crop, tone and (with DITHER=local) dither the photos of a plan, and write the files into
+  // `dir`: device.png for the display (not with `device: false`), previews, a thumbnail and the
+  // originals for the page.
+  async writeRender(dir, plan, inputs, { device = true } = {}) {
     const canvas = await composeCanvas(this.cfg, plan, inputs);
     const out = await renderCanvas(this.cfg, this.model, canvas);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(`${dir}/device.png`, out.devicePng);
+    if (device) fs.writeFileSync(`${dir}/device.png`, out.devicePng);
     fs.writeFileSync(`${dir}/preview.png`, out.previewPng);
     fs.writeFileSync(`${dir}/preview.jpg`, out.previewJpg);
     fs.writeFileSync(`${dir}/thumb.jpg`, await sharp(out.previewJpg).resize(240).jpeg({ quality: 80 }).toBuffer());
@@ -102,14 +121,7 @@ export class Library {
       const thumb = await sharp(inputs[i], { failOn: 'none' }).rotate().resize(900, 900, { fit: 'inside' }).jpeg({ quality: 82 }).toBuffer();
       fs.writeFileSync(`${dir}/source-${i + 1}.jpg`, thumb);
     }
-    log.info(`Rendered ${plan.kind} (${plan.items.length} photo${plan.items.length > 1 ? 's' : ''}) in ${out.ms} ms`);
-    return {
-      renderedAt: Date.now(),
-      kind: plan.kind,
-      ids: plan.items.map((it) => it.id),
-      items: plan.items.map((it) => ({ id: it.id, takenAt: it.takenAt, source: it.source, album: it.album })),
-      inkShare: out.inkShare,
-    };
+    return out;
   }
 
   // Videos in the album: look up file names and skip them (best effort).
@@ -149,10 +161,10 @@ export class Library {
       const it = plan.items[i];
       const { w, h } = cells[i].rect;
       try {
-        inputs.push(it.source === 'folder' ? fs.readFileSync(it.path) : await downloadImage(sizedUrl(it, w, h)));
+        inputs.push(it.path ? fs.readFileSync(it.path) : await downloadImage(sizedUrl(it, w, h)));
       } catch (err) {
         err.itemId = it.id;
-        if (it.source === 'folder') err.photoProblem = true; // (gone or unreadable)
+        if (it.path) err.photoProblem = true; // (a file that is gone or unreadable)
         throw err;
       }
     }

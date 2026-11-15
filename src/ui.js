@@ -25,11 +25,11 @@ export const UI_HTML = `<!doctype html>
   .frame { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
   .frame img { width:100%; height:auto; display:block; border-radius:4px; background:#ccc; }
   .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
-  .tabs button, .actions button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  .tabs button, .actions button, #gen button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
   .tabs button.on { border-color:var(--accent); color:var(--accent); }
   .actions { display:flex; gap:8px; flex-wrap:wrap; }
-  .actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
-  .actions button:disabled { opacity:.5; cursor:default; }
+  .actions button.primary, #gen button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
+  .actions button:disabled, #gen button:disabled { opacity:.5; cursor:default; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; display:grid; gap:14px; align-content:start; align-self:start; }
   dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
   dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
@@ -43,6 +43,21 @@ export const UI_HTML = `<!doctype html>
   .slots figure.now img { outline:3px solid var(--accent); outline-offset:2px; }
   .slots figcaption { font-size:12px; color:var(--muted); margin-top:5px; }
   .slots figure.now figcaption { color:var(--accent); font-weight:600; }
+  #gen { display:grid; gap:12px; }
+  #gen[hidden] { display:none; }
+  #gen textarea, #gen select { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  #gen textarea { width:100%; resize:vertical; min-height:76px; }
+  #gen .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  #gallery { display:grid; gap:14px; }
+  #gallery article { display:grid; grid-template-columns:96px minmax(0,1fr); gap:12px; align-items:start; border-top:1px solid var(--line); padding-top:14px; }
+  #gallery img, #gallery .wait { width:96px; border-radius:4px; display:block; background:#ccc; }
+  #gallery .wait { aspect-ratio:9/16; background:var(--line); animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity:.45; } }
+  @media (prefers-reduced-motion: reduce) { #gallery .wait { animation:none; } }
+  #gallery .prompt { overflow-wrap:anywhere; }
+  #gallery .row { margin-top:8px; }
+  #gallery label { font-size:14px; display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
+  #gallery .on { color:var(--accent); font-weight:600; }
   a { color:var(--accent); }
   @media (max-width:760px) { main { grid-template-columns:1fr; } }
 </style>
@@ -57,8 +72,21 @@ export const UI_HTML = `<!doctype html>
       <button data-view="sources">Original photos</button>
       <button data-view="playlist" hidden>Playlist</button>
       <button data-view="test">Test pattern</button>
+      <button data-view="generate">Generate</button>
     </div>
     <div id="view"></div>
+    <div id="gen" hidden>
+      <form id="genform">
+        <textarea id="prompt" maxlength="1500" placeholder="Describe a picture: a heron in a misty polder at dawn, one red rowing boat" aria-label="Describe the picture"></textarea>
+        <div class="row" style="margin-top:10px">
+          <label>Style <select id="style"></select></label>
+          <button class="primary" id="genbtn">Generate</button>
+          <span class="muted" id="genusage"></span>
+        </div>
+      </form>
+      <div class="err" id="generr"></div>
+      <div id="gallery"></div>
+    </div>
     <p class="muted" id="viewnote"></p>
   </section>
   <section class="card">
@@ -77,6 +105,8 @@ export const UI_HTML = `<!doctype html>
 </main>
 <script>
 let view = 'preview', last = null;
+// A tab has its own address (…/#generate), to bookmark it or come back to it.
+const showTab = (name) => { view = name; document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.view === name)); };
 // Several frames: ?frame=<id> says which one this page is about (default: the first).
 const frame = new URLSearchParams(location.search).get('frame');
 const u = (path) => frame ? path + (path.includes('?') ? '&' : '?') + 'frame=' + encodeURIComponent(frame) : path;
@@ -85,9 +115,48 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':
 const fmt = (t) => t ? new Date(t).toLocaleString([], { dateStyle:'medium', timeStyle:'short' }) : '–';
 const hm = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const day = (t) => t ? new Date(t).toLocaleDateString([], { dateStyle:'long' }) : 'unknown date';
+// A photo goes by the day it was taken, a picture made from a prompt by its prompt.
+const what = (it) => it.title ? '“' + it.title + '”' : day(it.takenAt);
+let galleryKey = '';
+// The Generate tab. Its form stays as it is between refreshes (someone may be typing in it);
+// the gallery is redrawn only when something in it changed.
+function renderGen(s) {
+  const g = s.generate || { items: [], styles: [], usage: {} };
+  const sel = $('#style');
+  if (!sel.options.length && g.styles.length) { sel.innerHTML = g.styles.map((o) => '<option value="' + esc(o.id) + '">' + esc(o.name) + '</option>').join(''); sel.value = g.style || 'none'; }
+  $('#genbtn').disabled = !g.enabled || !!g.busy;
+  $('#genbtn').textContent = g.busy ? 'Generating…' : 'Generate';
+  $('#genusage').textContent = g.enabled ? g.usage.count + ' of ' + g.usage.max + ' today' : '';
+  $('#generr').textContent = !g.enabled ? '' : g.error && !g.busy ? 'No picture (' + fmt(g.error.at) + '): ' + g.error.message : '';
+  const pl = s.playlist, deep = s.sleep && s.sleep.mode === 'deep';
+  const showTitle = pl && deep ? 'Now if the display is awake (press its power button first); otherwise at its next change. For one day.'
+    : pl ? 'Replaces the photo for now, for one day' : 'Sends it to the display now';
+  const blocked = !!s.busy && !s.busy.probe;
+  const key = JSON.stringify([g.items, g.busy && g.busy.prompt, blocked, showTitle]);
+  if (key !== galleryKey) {
+    galleryKey = key;
+    const wait = g.busy ? '<article><div class="wait"></div><div><div class="prompt">' + esc(g.busy.prompt) + '</div><div class="muted">Google is drawing it; this takes half a minute or so…</div></div></article>' : '';
+    $('#gallery').innerHTML = wait + g.items.map((it) => {
+      const on = !it.on ? '' : it.on.where === 'frame' ? 'On the frame' : it.on.where === 'planned' ? 'On the frame from ' + it.on.label : 'Goes on the frame when the display is next online';
+      return '<article data-id="' + esc(it.id) + '"><a href="' + u('/img/art/' + it.id + '/preview.png') + '" target="_blank"><img loading="lazy" src="' + u('/img/art/' + it.id + '/thumb.jpg') + '" alt=""></a><div>'
+        + '<div class="prompt">' + esc(it.prompt) + '</div>'
+        + '<div class="muted">' + esc((it.style ? it.style + ' · ' : '') + fmt(it.createdAt)) + (on ? ' · <span class="on">' + esc(on) + '</span>' : '') + '</div>'
+        + '<div class="row"><button data-art="show" title="' + esc(showTitle) + '"' + (blocked ? ' disabled' : '') + '>Show on the frame</button>'
+        + '<label title="Adds it to the photos the frame picks from: it comes up once per round of the album"><input type="checkbox" data-art="keep"' + (it.keep ? ' checked' : '') + '> Keep in rotation</label>'
+        + '<button data-art="reuse" title="Puts this description back in the box above">Reuse prompt</button>'
+        + '<button data-art="delete">Delete</button></div></div></article>';
+    }).join('');
+  }
+  return g.enabled
+    ? 'Pictures are made by Google (' + (g.model || 'Gemini') + ') from your description; each one costs a few cents. The preview shows a picture as it goes to the display. Click for full size.'
+    : (g.why || '');
+}
 function renderView(s) {
   const v = Date.now();
   let html = '', note = '';
+  $('#gen').hidden = view !== 'generate';
+  $('#view').hidden = view === 'generate';
+  if (view === 'generate') { $('#viewnote').textContent = renderGen(s); return; }
   if (view === 'preview') {
     if (s.current) { html = '<a href="' + u('/img/current/preview.png?' + v) + '" target="_blank"><img src="' + u('/img/current/preview.jpg?' + s.current.renderedAt) + '" alt="preview"></a>';
       note = s.dither === 'device'
@@ -256,14 +325,14 @@ function render(s) {
   const c = s.current;
   const tpShowing = s.testPattern && s.testPattern.sent && (!c || !c.pushedAt || s.testPattern.at > c.pushedAt);
   let onFrame = tpShowing ? 'the test pattern (until the next ' + (pl ? 'playlist' : 'update') + ')'
-    : c ? c.items.map((it) => day(it.takenAt)).join(' + ') + (c.dryRun ? ' <span class="muted">(dry run: EMDX_HOST not set)</span>' : c.pushed ? '' : ' <span class="err">(not on the display yet)</span>') : '–';
+    : c ? esc(c.items.map(what).join(' + ')) + (c.dryRun ? ' <span class="muted">(dry run: EMDX_HOST not set)</span>' : c.pushed ? '' : ' <span class="err">(not on the display yet)</span>') : '–';
   if (pl && c && c.since && !tpShowing && c.pushed) onFrame += esc(' · since ' + fmt(c.since) + (c.byDisplay ? ', changed by the display' : ''));
   // The NAS can't see the panel: after a change it only knows whether the display came online.
   const ch = pl && pl.changes && pl.changes[0];
   const miss = pl && pl.missed && !pl.missed.resolvedAt ? pl.missed : null;
   if (miss && c && c.byDisplay && !tpShowing) {
     const was = 'probably still ' + (miss.stillShows && miss.stillShows.dates ? miss.stillShows.dates.map(day).join(' + ') : 'the photo before');
-    onFrame = esc(was) + ' <span class="err">' + esc('(it missed the change of ' + fmt(miss.since) + (miss.count > 1 ? ' and ' + (miss.count - 1) + ' more' : '') + '; ' + c.items.map((it) => day(it.takenAt)).join(' + ') + ' is due, sent as soon as it is back)') + '</span>';
+    onFrame = esc(was) + ' <span class="err">' + esc('(it missed the change of ' + fmt(miss.since) + (miss.count > 1 ? ' and ' + (miss.count - 1) + ' more' : '') + '; ' + c.items.map(what).join(' + ') + ' is due, sent as soon as it is back)') + '</span>';
   } else if (ch && c && c.byDisplay && !ch.online && Date.now() < ch.until) {
     onFrame += ' <span class="muted">(not confirmed yet: the NAS is looking for the display)</span>';
   }
@@ -294,17 +363,46 @@ function render(s) {
 }
 async function refresh() {
   try { const r = await fetch(u('/api/status')); if (r.status === 404) throw 0; render(await r.json()); } catch (e) { $('#state').textContent = 'offline'; }
-  setTimeout(refresh, last && last.busy ? 2500 : 15000);
+  setTimeout(refresh, last && (last.busy || (last.generate && last.generate.busy)) ? 2500 : 15000);
 }
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
-  view = b.dataset.view; document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b)); if (last) renderView(last);
+  showTab(b.dataset.view); history.replaceState(null, '', view === 'preview' ? location.pathname + location.search : '#' + view); if (last) renderView(last);
 });
+const asked = location.hash.slice(1).replace(/[^a-z]/g, '');
+if (asked && document.querySelector('.tabs button[data-view="' + asked + '"]')) showTab(asked);
 document.querySelectorAll('.actions button').forEach((b) => b.onclick = async () => {
   b.disabled = true;
   const r = await fetch(u('/api/' + b.dataset.act), { method:'POST' });
   if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || 'Failed'); }
-  if (b.dataset.act === 'test-pattern') { view = 'test'; document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.view === 'test')); }
+  if (b.dataset.act === 'test-pattern') showTab('test');
   setTimeout(async () => { const r2 = await fetch(u('/api/status')); render(await r2.json()); }, 600);
+});
+// The Generate tab: one request per button, then a fresh look at the status.
+async function post(path, body) {
+  const r = await fetch(u(path), { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || 'Failed'); }
+  const r2 = await fetch(u('/api/status')); if (r2.ok) render(await r2.json());
+  return r.ok;
+}
+$('#genform').onsubmit = async (e) => {
+  e.preventDefault();
+  const prompt = $('#prompt').value.trim();
+  if (!prompt) { $('#prompt').focus(); return; }
+  $('#genbtn').disabled = true;
+  await post('/api/generate', { prompt, style: $('#style').value });
+};
+$('#gallery').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-art]');
+  if (!b) return;
+  const id = b.closest('article').dataset.id;
+  const item = ((last && last.generate && last.generate.items) || []).find((x) => x.id === id);
+  if (b.dataset.art === 'reuse') { if (item) { $('#prompt').value = item.prompt; $('#prompt').focus(); } return; }
+  if (b.dataset.art === 'delete' && !confirm('Delete this picture?' + (item && item.keep ? ' It is in the rotation.' : ''))) return;
+  b.disabled = true;
+  if (!await post('/api/art/' + b.dataset.art, { id })) b.disabled = false;
+});
+$('#gallery').addEventListener('change', (e) => {
+  if (e.target.dataset.art === 'keep') post('/api/art/keep', { id: e.target.closest('article').dataset.id, keep: e.target.checked });
 });
 refresh();
 </script>

@@ -107,7 +107,16 @@ async function scaled(input, longSide) {
 // The faces in a photo (a file's bytes): [{ x, y, w, h, score }] as fractions of the upright
 // photo's width and height. Empty when there are none, or when the detector can't run (logged
 // once; the crop then falls back to what it did without faces).
-export async function detectFaces(input) {
+export function detectFaces(input) {
+  // One photo at a time: the detector's session doesn't take two runs at once, and renders can
+  // overlap (several frames, or a generated picture's preview next to the day's photos).
+  const result = waiting.then(() => detect(input));
+  waiting = result.catch(() => {});
+  return result;
+}
+let waiting = Promise.resolve();
+
+async function detect(input) {
   if (broken) return [];
   let ort, session;
   try {

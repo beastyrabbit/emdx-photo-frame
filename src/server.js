@@ -164,10 +164,10 @@ export function createServer(cfg, frames) {
     }
   }
 
-  function sendFile(res, file, type) {
+  function sendFile(res, file, type, cache = 'no-store') {
     fs.stat(file, (err, st) => {
       if (err) { res.writeHead(404).end('not found'); return; }
-      res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Cache-Control': 'no-store' });
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Cache-Control': cache });
       fs.createReadStream(file).pipe(res);
     });
   }
@@ -274,6 +274,44 @@ export function createServer(cfg, frames) {
     if (slot && req.method === 'GET') {
       return sendFile(res, app.store.path('playlist', slot[1], slot[2]), slot[2].endsWith('.png') ? 'image/png' : 'image/jpeg');
     }
+    // A picture in the gallery of generated ones (its files never change).
+    const art = /^\/img\/art\/([0-9a-f]{12})\/(thumb\.jpg|preview\.jpg|preview\.png)$/.exec(p);
+    if (art && req.method === 'GET') {
+      return sendFile(res, app.store.path('generated', art[1], art[2]), art[2].endsWith('.png') ? 'image/png' : 'image/jpeg', 'private, max-age=86400');
+    }
+    // Only accept button presses from this page (no cross-site requests).
+    const sameHost = () => {
+      const origin = req.headers.origin;
+      try { return !origin || new URL(origin).host === req.headers.host; } catch { return false; }
+    };
+    const scope = several ? app.cfg?.frame?.name : null; // (whose log lines these are)
+    // The Generate tab: these take a JSON body. Each answers with what went wrong, if anything,
+    // as { error }; making a picture and sending it to the frame go on in the background.
+    const artActions = {
+      '/api/generate': (body) => { app.startGenerate(body).catch(() => { /* on the page, and in the log */ }); return 202; },
+      '/api/art/show': (body) => {
+        if (app.busy && !app.busy.probe) throw Object.assign(new Error(`Busy: ${app.busy.what}`), { status: 409 });
+        app.showArt(String(body.id)).catch((err) => log.error(`${p} failed:`, err));
+        return 202;
+      },
+      '/api/art/keep': (body) => { app.keepArt(String(body.id), body.keep !== false); return 200; },
+      '/api/art/delete': (body) => { app.deleteArt(String(body.id)); return 200; },
+    };
+    if (artActions[p] && req.method === 'POST') {
+      if (!sameHost()) return json(res, 403, { error: 'Cross-origin request refused' });
+      readBody(req).then((buf) => {
+        let body = null;
+        try { body = JSON.parse(buf.toString('utf8') || '{}'); } catch { /* refused below */ }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { error: 'Expected a JSON object' });
+        try {
+          return json(res, log.scope(scope, () => artActions[p](body)), { ok: true });
+        } catch (err) {
+          if (!err.status) log.error(`${p} failed:`, err);
+          return json(res, err.status || 500, { error: err.message });
+        }
+      }, (err) => json(res, err.status || 400, { error: 'Could not read the request' }));
+      return;
+    }
     const actions = {
       '/api/next': () => app.next('manual'),
       '/api/resend': () => app.resend(),
@@ -284,14 +322,9 @@ export function createServer(cfg, frames) {
     };
     const isAction = actions[p] || p === '/api/display-info';
     if (isAction && req.method === 'POST') {
-      // Only accept button presses from this page (no cross-site requests).
-      const origin = req.headers.origin;
-      let sameHost = true;
-      try { sameHost = !origin || new URL(origin).host === req.headers.host; } catch { sameHost = false; }
-      if (!sameHost) return json(res, 403, { error: 'Cross-origin request refused' });
+      if (!sameHost()) return json(res, 403, { error: 'Cross-origin request refused' });
       // (A quick look at the display doesn't count: the action waits for it, see exclusive().)
       if (app.busy && !app.busy.probe) return json(res, 409, { error: `Busy: ${app.busy.what}` });
-      const scope = several ? app.cfg?.frame?.name : null; // (whose log lines these are)
       if (p === '/api/display-info') {
         // Wakes the display and reads it; answers when done.
         log.scope(scope, () => app.displayInfo()).then((info) => json(res, 200, info), (err) => json(res, 502, { error: err.message }));

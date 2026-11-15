@@ -178,6 +178,9 @@ export function loadConfig(env = process.env, asked = null) {
     throw new Error(`PLAYLIST_TOPUP_DAYS must be a whole number from 1 to 60 (got "${topUpDays}")`);
   }
 
+  // Pictures from a text prompt (the page's "Generate" tab), made by Google's image model.
+  const generateSize = oneOf('GENERATE_SIZE', '2k', ['1k', '2k', '4k']).toUpperCase();
+
   const cfg = {
     // Which frame this is (several frames: see loadFrames()).
     frame: { id: 'main', name: str('FRAME_NAME', 'Photo frame') },
@@ -277,6 +280,20 @@ export function loadConfig(env = process.env, asked = null) {
       confirmEverySec: 15,
     },
 
+    generate: {
+      // An API key from Google AI Studio (aistudio.google.com), on a project with billing on.
+      apiKey: str('GEMINI_API_KEY'),
+      model: str('GENERATE_MODEL', 'gemini-nano-banana-2.1'),
+      // 2K covers the EM32DX (1536x2752 for a 1440x2560 frame); 1K is cheaper and gets enlarged.
+      size: generateSize,
+      // Requests to Google per day, at most: each one is paid for.
+      dailyMax: num('GENERATE_DAILY_MAX', 20, { min: 0, int: true }),
+      // Pictures the gallery holds (those kept in the rotation come on top).
+      galleryMax: 100,
+      timeoutSec: 180,
+      baseUrl: str('GEMINI_API_URL', 'https://generativelanguage.googleapis.com'),
+    },
+
     panel: {
       name: panelName,
       width,
@@ -327,6 +344,7 @@ export function describeConfig(cfg) {
       ? `updates: playlist of ${cfg.update.days} day${cfg.update.days === 1 ? '' : 's'} (a fresh one ${cfg.update.resend === 'every-change' ? 'after every change' : `when fewer than ${cfg.update.topUpDays} are left`}), the display changes the photo at each SCHEDULE time`
       : 'updates: the NAS sends a photo at each SCHEDULE time',
     `image: dither=${cfg.image.dither} method=${cfg.image.method} kernel=${cfg.image.kernel} sat=${cfg.image.saturation} contrast=${cfg.image.contrast}`,
+    `pictures from a prompt: ${cfg.generate.apiKey ? (cfg.server.uiPassword ? `on (${cfg.generate.model}, ${cfg.generate.size}, ${cfg.generate.dailyMax} a day at most)` : 'off (set UI_PASSWORD too)') : 'off (GEMINI_API_KEY not set)'}`,
   ].join('\n  ');
 }
 

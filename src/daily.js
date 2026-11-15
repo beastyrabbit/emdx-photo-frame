@@ -26,8 +26,17 @@ import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { log } from './log.js';
 import { markShown } from './selector.js';
-import { pushContent } from './display.js';
+import { pushContent, probeDisplay } from './display.js';
 import { changeClock, slotKey, dayLabel, buildBatch, positionAt } from './playlist.js';
+
+// A planned photo that lost its day (to a picture made from a prompt): back to the front of the
+// round, so it is the next one planned.
+function unplan(state, ids) {
+  const back = ids.filter((id) => !String(id).startsWith('gen:'));
+  const set = new Set(back);
+  state.shownThisCycle = (state.shownThisCycle || []).filter((id) => !set.has(id));
+  state.bag = [...back, ...(state.bag || []).filter((id) => !set.has(id))];
+}
 
 const FILES = ['device.png', 'preview.png', 'preview.jpg', 'thumb.jpg', 'source-1.jpg', 'source-2.jpg'];
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -515,6 +524,54 @@ export class DailyPlaylist {
       log.info(`Playlist: new photo for now (${slot.kind}); sending the playlist.`);
       return this.send('manual');
     });
+  }
+
+  // "Show on the frame" for a picture made from a prompt (art.js): a one-off that takes a photo's
+  // place for a day. If the display can be reached it replaces the photo for now and the playlist
+  // goes out at once. A display in deep sleep can't be reached, so there the picture takes the
+  // place of the photo for the next change: after that change the display comes online, gets
+  // its fresh playlist, and that starts with the picture. (In the slot for now it would never be
+  // shown: the playlist after the change starts at the next slot.) `render(dir)` renders the
+  // picture into a folder and returns what a slot holds; `ids`: the picture's. Runs inside the
+  // caller's lock.
+  async showPicture(render, ids = []) {
+    const app = this.app;
+    const cfg = this.cfg;
+    const now = Date.now();
+    // Asked for a second time (now that the display is awake, say): not on two days.
+    this.st.slots = this.st.slots.filter((s) => !(s.at > now && s.ids?.some((id) => ids.includes(id))));
+    await this.ensurePlan();
+    const curAt = this.clock.prev(now) ?? now;
+    const nextAt = this.clock.next(now);
+    const put = (at, slot) => { this.st.slots = [...this.st.slots.filter((s) => s.at !== at && s !== slot), slot].sort((x, y) => x.at - y.at); };
+    app.setBusy('Rendering the picture');
+    const slot = this.newSlot(curAt, {});
+    Object.assign(slot, await render(app.store.path('playlist', slot.dir)));
+    const asleep = !!cfg.display.host && cfg.sleep.mode === 'deep' && nextAt != null && !(await probeDisplay(cfg));
+    if (!asleep) {
+      const was = this.st.slots.find((s) => s.at === curAt) || null;
+      put(curAt, slot);
+      this.st.pending = 'a picture for now';
+      app.store.save();
+      try {
+        await this.send('manual');
+        return slot;
+      } catch (err) {
+        if (!err.unreachable || nextAt == null) throw err;
+        if (was) put(curAt, was); // (still on the frame)
+        else this.st.slots = this.st.slots.filter((s) => s !== slot);
+      }
+    }
+    // The photo that was planned for that change comes up first again.
+    const displaced = this.st.slots.find((s) => s.at === nextAt && s !== slot);
+    Object.assign(slot, { at: nextAt, key: slotKey(nextAt, cfg.timezone) });
+    put(nextAt, slot);
+    if (displaced) unplan(app.state, displaced.ids || []);
+    this.st.pending = 'a picture is waiting for the display';
+    this.prune();
+    app.store.save();
+    log.info(`Playlist: the display is asleep, so the picture goes on the frame at the next change (${dayLabel(nextAt, cfg.timezone, true)}). Sooner: press the display's power button, then Show on the frame again.`);
+    return slot;
   }
 
   // At startup: catch up with what the display shows, prepare the coming photos, and say
