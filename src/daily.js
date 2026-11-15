@@ -26,13 +26,16 @@ import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { log } from './log.js';
 import { markShown } from './selector.js';
+import { shownAs } from './library.js';
 import { pushContent, probeDisplay } from './display.js';
 import { changeClock, slotKey, dayLabel, buildBatch, positionAt } from './playlist.js';
 
-// A planned photo that lost its day (to a picture made from a prompt): back to the front of the
-// round, so it is the next one planned.
+// A planned photo that lost its day (to a picture made from a prompt, or an artwork): back to the
+// front of the round, so it is the next one planned. (An artwork only when it is in the rotation:
+// for one the frame brought by itself, see unplanArtworks().)
 function unplan(state, ids) {
-  const back = ids.filter((id) => !String(id).startsWith('gen:'));
+  const kept = new Set((state.library?.items || []).map((it) => it.id));
+  const back = ids.filter((id) => !String(id).startsWith('gen:') && (!String(id).startsWith('art:') || kept.has(id)));
   const set = new Set(back);
   state.shownThisCycle = (state.shownThisCycle || []).filter((id) => !set.has(id));
   state.bag = [...back, ...(state.bag || []).filter((id) => !set.has(id))];
@@ -368,15 +371,15 @@ export class DailyPlaylist {
         const cur = this.advance();
         if (cur) {
           const loop = cur.loop ? ` (repeating: playlist round ${cur.loop + 1})` : '';
-          const taken = (cur.items || []).map((i) => (i.takenAt ? new Date(i.takenAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: this.cfg.timezone }) : 'date unknown'));
-          log.info(`Playlist: the display should now show ${this.label(this.clock.prev(Date.now()))}'s photo (${cur.kind}${taken.length ? `, taken ${taken.join(' + ')}` : ''})${loop}.`);
+          const taken = (cur.items || []).map((i) => (i.title ? `“${i.title}”` : i.takenAt ? `taken ${new Date(i.takenAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: this.cfg.timezone })}` : 'date unknown'));
+          log.info(`Playlist: the display should now show ${this.label(this.clock.prev(Date.now()))}'s photo (${cur.kind}${taken.length ? `, ${taken.join(' + ')}` : ''})${loop}.`);
           // The NAS can't see the panel. Coming online right after the change is the only sign
           // that the display made it, so in deep sleep the entry says "due" until the NAS has
           // looked for it (watchAfterChange()), and then whether it came online.
           const watched = this.cfg.display.host && this.cfg.sleep.mode !== 'standby';
           app.addHistory({
             ok: true, kind: `${cur.kind}, ${watched ? 'due to change by itself (does the display come online?)' : 'changed by the display (expected)'}${loop}`,
-            ids: cur.ids, dates: cur.items.map((i) => i.takenAt), ...(watched ? { change: slotKey(this.clock.prev(Date.now()) ?? Date.now(), this.cfg.timezone), what: cur.kind, loop } : {}),
+            ids: cur.ids, ...shownAs(cur.items), ...(watched ? { change: slotKey(this.clock.prev(Date.now()) ?? Date.now(), this.cfg.timezone), what: cur.kind, loop } : {}),
           });
         } else if (!this.st.batch) {
           log.info('Playlist: a change time, but the display has no playlist yet.');
@@ -566,7 +569,10 @@ export class DailyPlaylist {
     const displaced = this.st.slots.find((s) => s.at === nextAt && s !== slot);
     Object.assign(slot, { at: nextAt, key: slotKey(nextAt, cfg.timezone) });
     put(nextAt, slot);
-    if (displaced) unplan(app.state, displaced.ids || []);
+    if (displaced) {
+      unplan(app.state, displaced.ids || []);
+      app.unplanArtworks(displaced.ids || []);
+    }
     this.st.pending = 'a picture is waiting for the display';
     this.prune();
     app.store.save();

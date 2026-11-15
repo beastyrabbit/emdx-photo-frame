@@ -10,6 +10,15 @@ import { composeCanvas, renderCanvas, planCells } from './render.js';
 
 const DAY = 24 * 3600 * 1000;
 
+// What an entry of the Recent list says about the photos shown: when each was taken, and the
+// title of those that have one (a picture made from a prompt, an artwork).
+export function shownAs(items = []) {
+  return {
+    dates: items.map((i) => i.takenAt ?? null),
+    ...(items.some((i) => i.title) ? { titles: items.map((i) => i.title || null) } : {}),
+  };
+}
+
 export class Library {
   // ---------- photo library ----------
   refreshLibrary() {
@@ -52,12 +61,37 @@ export class Library {
     const kept = this.keptArt?.() ?? [];
     items.push(...kept);
     if (kept.length) albums.push({ url: 'generated', title: 'Generated', count: kept.length });
+    // Artworks from the catalogue that were kept in the rotation (artworks.js).
+    const art = this.keptArtworks?.() ?? [];
+    items.push(...art);
+    if (art.length) albums.push({ url: 'art', title: 'Art', count: art.length });
     if (!items.length) {
-      throw new Error(errors.length ? errors.join(' | ') : 'No photos found. Set ALBUM_URLS (and/or PHOTO_DIR).');
+      throw new Error(errors.length ? errors.join(' | ') : 'No photos found. Set ALBUM_URLS (and/or PHOTO_DIR), or ART_EVERY=1 for a frame of artworks.');
     }
     this.state.library = { fetchedAt: Date.now(), albums, items, errors };
     this.store.save();
     return this.state.library;
+  }
+
+  // Add an item to the photos read last, or take it out, without reading the album anew.
+  // `shelf`: the "album" such items are listed under ({ url, title }).
+  libraryItem(entry, keep, shelf) {
+    const lib = this.state.library;
+    if (!lib?.items) return;
+    lib.items = lib.items.filter((it) => it.id !== entry.id);
+    if (keep) lib.items.push(entry);
+    const count = lib.items.filter((it) => it.source === entry.source).length;
+    lib.albums = [...(lib.albums || []).filter((a) => a.url !== shelf.url), ...(count ? [{ ...shelf, count }] : [])];
+  }
+
+  // Where a picture (by its id in the library) is: 'frame' (on it), 'waiting' (goes out when the
+  // display is next online) or 'planned' (for the change at `at`); null: nowhere.
+  whereOn(id, now = Date.now()) {
+    const c = this.state.current;
+    if (c?.ids?.includes(id) && !(this.daily?.st.replaced)) return { where: c.pushed || c.dryRun ? 'frame' : 'waiting' };
+    const slot = this.daily?.st.slots.find((s) => s.ids?.includes(id));
+    if (!slot) return null;
+    return slot.at > now ? { where: 'planned', at: slot.at, label: this.daily.label(slot.at) } : { where: 'waiting' };
   }
 
   // Pick the next photo(s) from the album, download, crop and render them into `dir`
@@ -66,6 +100,19 @@ export class Library {
   // album anew. `say`: reports progress (default: the busy label).
   async renderPhoto(dir, { fresh = false, say = (what) => this.setBusy(what) } = {}) {
     const st = this.state;
+    // ART_EVERY: every so often an artwork from the catalogue takes the photo's turn.
+    if (this.artworkTurn?.()) {
+      try {
+        const meta = await this.renderArtwork(dir, { say });
+        // (The album is still read anew, so that new photos join the round today.)
+        if (fresh && (this.cfg.albumUrls.length || this.cfg.photoDir)) await this.loadLibrary(0).catch((err) => log.warn(`Could not read the album: ${err.message}`));
+        return meta;
+      } catch (err) {
+        if (!this.hasPhotos()) throw err;
+        this.aw.lastError = { at: Date.now(), message: err.message };
+        log.warn(`Art: ${err.message}. A photo takes the turn; the artwork comes next time.`);
+      }
+    }
     const lib = await this.loadLibrary(fresh ? 0 : 30 * 60 * 1000);
     const byId = new Map(lib.items.map((it) => [it.id, it]));
     const ids = lib.items.map((it) => it.id);
@@ -96,6 +143,7 @@ export class Library {
     say('Cropping and dithering');
     const out = await this.writeRender(dir, plan, inputs);
     log.info(`Rendered ${plan.kind} (${plan.items.length} photo${plan.items.length > 1 ? 's' : ''}) in ${out.ms} ms`);
+    this.notePhoto?.();
     return {
       renderedAt: Date.now(),
       kind: plan.kind,

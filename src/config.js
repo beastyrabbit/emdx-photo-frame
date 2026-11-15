@@ -181,6 +181,10 @@ export function loadConfig(env = process.env, asked = null) {
   // Pictures from a text prompt (the page's "Generate" tab), made by Google's image model.
   const generateSize = oneOf('GENERATE_SIZE', '2k', ['1k', '2k', '4k']).toUpperCase();
 
+  // Public-domain artworks (the page's "Art" tab), from the paperlesspaper art catalogue.
+  const artUrl = str('ART_API_URL', 'https://art.paperlesspaper.de');
+  if (!/^https?:\/\/[^\s/]+/i.test(artUrl)) throw new Error(`ART_API_URL must be an http(s) address (got "${artUrl}")`);
+
   const cfg = {
     // Which frame this is (several frames: see loadFrames()).
     frame: { id: 'main', name: str('FRAME_NAME', 'Photo frame') },
@@ -294,6 +298,25 @@ export function loadConfig(env = process.env, asked = null) {
       baseUrl: str('GEMINI_API_URL', 'https://generativelanguage.googleapis.com'),
     },
 
+    art: {
+      baseUrl: artUrl.replace(/\/+$/, ''),
+      // Every this many photos the frame brings one of the catalogue's top picks by itself, in
+      // a photo's place (3: two photos, then an artwork; 1: artworks only). 0: only on request.
+      every: num('ART_EVERY', 0, { min: 0, max: 1000, int: true }),
+      // The title, artist and date under the artwork.
+      caption: bool('ART_CAPTION', true),
+      // Artworks the NAS keeps (those kept in the rotation come on top).
+      galleryMax: 100,
+      // How long the list of top picks serves before it is read anew.
+      poolDays: 7,
+      // What the frame brings by itself: an artwork that covers at least this share of the frame's
+      // shape (not a wide painting on a tall frame), and is not enlarged by more than this.
+      minFill: 0.5,
+      maxEnlarge: 1.6,
+      timeoutSec: 30,
+      maxBytes: 40e6,
+    },
+
     panel: {
       name: panelName,
       width,
@@ -344,6 +367,7 @@ export function describeConfig(cfg) {
       ? `updates: playlist of ${cfg.update.days} day${cfg.update.days === 1 ? '' : 's'} (a fresh one ${cfg.update.resend === 'every-change' ? 'after every change' : `when fewer than ${cfg.update.topUpDays} are left`}), the display changes the photo at each SCHEDULE time`
       : 'updates: the NAS sends a photo at each SCHEDULE time',
     `image: dither=${cfg.image.dither} method=${cfg.image.method} kernel=${cfg.image.kernel} sat=${cfg.image.saturation} contrast=${cfg.image.contrast}`,
+    `artworks: ${cfg.art.every === 1 ? 'every photo is an artwork' : cfg.art.every ? `one in ${cfg.art.every} photos is an artwork` : 'on request (the Art tab)'}, from ${cfg.art.baseUrl}`,
     `pictures from a prompt: ${cfg.generate.apiKey ? (cfg.server.uiPassword ? `on (${cfg.generate.model}, ${cfg.generate.size}, ${cfg.generate.dailyMax} a day at most)` : 'off (set UI_PASSWORD too)') : 'off (GEMINI_API_KEY not set)'}`,
   ].join('\n  ');
 }

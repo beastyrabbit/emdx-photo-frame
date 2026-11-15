@@ -9,11 +9,12 @@ import { pushToDisplay, readDisplayInfo, probeDisplay } from './display.js';
 import { renderTestPattern } from './testPattern.js';
 import { DailyPlaylist } from './daily.js';
 import { notify } from './notify.js';
-import { Library } from './library.js';
+import { Library, shownAs } from './library.js';
 import { Sleep } from './sleep.js';
 import { Cleaning } from './cleaning.js';
 import { Checks } from './checks.js';
 import { Art } from './art.js';
+import { Artworks } from './artworks.js';
 
 const DAY = 24 * 3600 * 1000;
 const LOW_BATTERY = 20; // percent
@@ -157,7 +158,7 @@ export class FrameApp {
       log.info('EMDX_HOST not set: dry run, nothing sent to a display.');
       current.dryRun = true;
       markShown(st, current.ids);
-      this.addHistory({ ok: true, kind: `${current.kind} (dry run)`, ids: current.ids, dates: current.items.map((i) => i.takenAt) });
+      this.addHistory({ ok: true, kind: `${current.kind} (dry run)`, ids: current.ids, ...shownAs(current.items) });
       this.store.save();
       return current;
     }
@@ -171,7 +172,7 @@ export class FrameApp {
       this.noteBattery(battery);
       markShown(st, current.ids);
       this.addHistory({
-        ok: true, kind: current.kind, ids: current.ids, dates: current.items.map((i) => i.takenAt),
+        ok: true, kind: current.kind, ids: current.ids, ...shownAs(current.items),
         battery: battery?.batteryPercent ?? null, waited: waitedSec ?? undefined,
       });
       st.lastError = null;
@@ -358,6 +359,7 @@ export class FrameApp {
       history: st.history.slice(0, 10),
       testPattern: st.testPattern || null,
       generate: this.artStatus(),
+      artworks: this.artworksStatus(),
       dither: this.cfg.image.dither,
       sleep: this.cfg.display.host ? this.sleepStatus() : null,
       deepSleep: st.deepSleep || null,
@@ -431,7 +433,7 @@ export function upgradeState(st) {
 }
 
 // FrameApp's methods live in several files, by subject: add them to the class.
-for (const part of [Library, Sleep, Cleaning, Checks, Art]) {
+for (const part of [Library, Sleep, Cleaning, Checks, Art, Artworks]) {
   for (const name of Object.getOwnPropertyNames(part.prototype)) {
     if (name !== 'constructor') Object.defineProperty(FrameApp.prototype, name, Object.getOwnPropertyDescriptor(part.prototype, name));
   }

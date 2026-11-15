@@ -150,7 +150,7 @@ async function main() {
     scoped(f, () => {
       log.info(`Config:\n  ${describeConfig(f.cfg)}`);
       if (!f.cfg.display.host) log.warn('EMDX_HOST is not set: dry run, photos will be rendered but not sent.');
-      if (!f.cfg.albumUrls.length && !f.cfg.photoDir) log.warn('Neither ALBUM_URLS nor PHOTO_DIR is set: there is nothing to show yet.');
+      if (!f.cfg.albumUrls.length && !f.cfg.photoDir && !f.cfg.art.every) log.warn('Neither ALBUM_URLS nor PHOTO_DIR is set: there is nothing to show yet.');
     });
   }
 

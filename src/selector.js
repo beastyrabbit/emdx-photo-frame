@@ -58,6 +58,8 @@ export function planNext(cfg, state, itemsById, rand = Math.random) {
   const firstId = state.bag.find((id) => itemsById.has(id) && !isExcluded(state, id));
   if (!firstId) return null;
   const first = itemsById.get(firstId);
+  // An artwork kept in the rotation is shown whole, by itself (artworks.js).
+  if (first.source === 'art') return { kind: 'artwork', items: [first] };
   if (!isOdd(first)) return { kind: 'cover', items: [first] };
 
   if (cfg.layout.odd === 'pair' && pairHelps(first)) {
@@ -66,7 +68,7 @@ export function planNext(cfg, state, itemsById, rand = Math.random) {
       for (const id of ids) {
         if (id === first.id || isExcluded(state, id)) continue;
         const it = itemsById.get(id);
-        if (!it || !isOdd(it) || !pairHelps(it)) continue;
+        if (!it || it.source === 'art' || !isOdd(it) || !pairHelps(it)) continue;
         // Prefer a photo taken around the same time (same day out, same party...).
         const score = first.takenAt != null && it.takenAt != null
           ? Math.abs(first.takenAt - it.takenAt)
@@ -82,9 +84,12 @@ export function planNext(cfg, state, itemsById, rand = Math.random) {
   return { kind: cfg.layout.odd === 'crop' ? 'cover' : 'fit', items: [first] };
 }
 
+// (Only what was in the bag counts for the round: a one-off, such as an artwork the frame
+// brought by itself, is not one of the album's photos.)
 export function markShown(state, ids) {
   const set = new Set(ids);
+  const fromBag = new Set((state.bag || []).filter((id) => set.has(id)));
   state.bag = (state.bag || []).filter((id) => !set.has(id));
   const shown = new Set(state.shownThisCycle || []);
-  state.shownThisCycle = [...(state.shownThisCycle || []), ...ids.filter((id) => !shown.has(id))];
+  state.shownThisCycle = [...(state.shownThisCycle || []), ...ids.filter((id) => fromBag.has(id) && !shown.has(id))];
 }

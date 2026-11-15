@@ -279,13 +279,23 @@ export function createServer(cfg, frames) {
     if (art && req.method === 'GET') {
       return sendFile(res, app.store.path('generated', art[1], art[2]), art[2].endsWith('.png') ? 'image/png' : 'image/jpeg', 'private, max-age=86400');
     }
+    // An artwork on the NAS (artworks.js; its files never change), and a search of the catalogue.
+    const work = /^\/img\/artwork\/([0-9a-f]{12})\/(thumb\.jpg|preview\.jpg|preview\.png)$/.exec(p);
+    if (work && req.method === 'GET') {
+      return sendFile(res, app.store.path('artworks', work[1], work[2]), work[2].endsWith('.png') ? 'image/png' : 'image/jpeg', 'private, max-age=86400');
+    }
+    if (p === '/api/artworks/search' && req.method === 'GET') {
+      app.searchArtworks({ q: (url.searchParams.get('q') || '').slice(0, 100), offset: url.searchParams.get('offset') })
+        .then((found) => json(res, 200, found), (err) => json(res, 502, { error: err.message }));
+      return;
+    }
     // Only accept button presses from this page (no cross-site requests).
     const sameHost = () => {
       const origin = req.headers.origin;
       try { return !origin || new URL(origin).host === req.headers.host; } catch { return false; }
     };
     const scope = several ? app.cfg?.frame?.name : null; // (whose log lines these are)
-    // The Generate tab: these take a JSON body. Each answers with what went wrong, if anything,
+    // The Generate and Art tabs: these take a JSON body. Each answers with what went wrong, if anything,
     // as { error }; making a picture and sending it to the frame go on in the background.
     const artActions = {
       '/api/generate': (body) => { app.startGenerate(body).catch(() => { /* on the page, and in the log */ }); return 202; },
@@ -296,6 +306,10 @@ export function createServer(cfg, frames) {
       },
       '/api/art/keep': (body) => { app.keepArt(String(body.id), body.keep !== false); return 200; },
       '/api/art/delete': (body) => { app.deleteArt(String(body.id)); return 200; },
+      // The Art tab: showing and keeping may have to download the artwork first.
+      '/api/artworks/show': (body) => { app.startShowArtwork(String(body.id)).catch(() => { /* on the page, and in the log */ }); return 202; },
+      '/api/artworks/keep': (body) => { app.startKeepArtwork(String(body.id), body.keep !== false).catch(() => { /* on the page, and in the log */ }); return 202; },
+      '/api/artworks/remove': (body) => { app.removeArtwork(String(body.id), { never: body.never === true }); return 200; },
     };
     if (artActions[p] && req.method === 'POST') {
       if (!sameHost()) return json(res, 403, { error: 'Cross-origin request refused' });

@@ -25,11 +25,11 @@ export const UI_HTML = `<!doctype html>
   .frame { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
   .frame img { width:100%; height:auto; display:block; border-radius:4px; background:#ccc; }
   .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
-  .tabs button, .actions button, #gen button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  .tabs button, .actions button, #gen button, #art button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
   .tabs button.on { border-color:var(--accent); color:var(--accent); }
   .actions { display:flex; gap:8px; flex-wrap:wrap; }
-  .actions button.primary, #gen button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
-  .actions button:disabled, #gen button:disabled { opacity:.5; cursor:default; }
+  .actions button.primary, #gen button.primary, #art button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
+  .actions button:disabled, #gen button:disabled, #art button:disabled { opacity:.5; cursor:default; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; display:grid; gap:14px; align-content:start; align-self:start; }
   dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
   dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
@@ -43,21 +43,28 @@ export const UI_HTML = `<!doctype html>
   .slots figure.now img { outline:3px solid var(--accent); outline-offset:2px; }
   .slots figcaption { font-size:12px; color:var(--muted); margin-top:5px; }
   .slots figure.now figcaption { color:var(--accent); font-weight:600; }
-  #gen { display:grid; gap:12px; }
-  #gen[hidden] { display:none; }
-  #gen textarea, #gen select { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  #gen, #art { display:grid; gap:12px; }
+  #gen[hidden], #art[hidden] { display:none; }
+  #gen textarea, #gen select, #art input[type=search] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
   #gen textarea { width:100%; resize:vertical; min-height:76px; }
-  #gen .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  #gallery { display:grid; gap:14px; }
-  #gallery article { display:grid; grid-template-columns:96px minmax(0,1fr); gap:12px; align-items:start; border-top:1px solid var(--line); padding-top:14px; }
-  #gallery img, #gallery .wait { width:96px; border-radius:4px; display:block; background:#ccc; }
-  #gallery .wait { aspect-ratio:9/16; background:var(--line); animation:pulse 1.6s ease-in-out infinite; }
+  #art input[type=search] { flex:1; min-width:180px; }
+  #gen .row, #art .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .gallery { display:grid; gap:14px; }
+  .gallery article { display:grid; grid-template-columns:96px minmax(0,1fr); gap:12px; align-items:start; border-top:1px solid var(--line); padding-top:14px; }
+  .gallery img, .gallery .wait { width:96px; border-radius:4px; display:block; background:#ccc; }
+  .gallery .wait { aspect-ratio:9/16; background:var(--line); animation:pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity:.45; } }
-  @media (prefers-reduced-motion: reduce) { #gallery .wait { animation:none; } }
-  #gallery .prompt { overflow-wrap:anywhere; }
-  #gallery .row { margin-top:8px; }
-  #gallery label { font-size:14px; display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
-  #gallery .on { color:var(--accent); font-weight:600; }
+  @media (prefers-reduced-motion: reduce) { .gallery .wait { animation:none; } }
+  .gallery .prompt { overflow-wrap:anywhere; }
+  .gallery .row { margin-top:8px; }
+  .gallery label { font-size:14px; display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
+  .gallery .on, .found .on { color:var(--accent); font-weight:600; }
+  .found { display:grid; gap:16px 12px; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); max-height:640px; overflow-y:auto; padding-right:4px; }
+  .found figure { margin:0; display:grid; gap:6px; align-content:start; }
+  .found img { width:100%; display:block; border-radius:4px; background:#ccc; }
+  .found figcaption { font-size:13px; overflow-wrap:anywhere; }
+  .found .row { gap:6px; font-size:13px; }
+  #art .found button { font-size:13px; padding:4px 8px; }
   a { color:var(--accent); }
   @media (max-width:760px) { main { grid-template-columns:1fr; } }
 </style>
@@ -73,6 +80,7 @@ export const UI_HTML = `<!doctype html>
       <button data-view="playlist" hidden>Playlist</button>
       <button data-view="test">Test pattern</button>
       <button data-view="generate">Generate</button>
+      <button data-view="art">Art</button>
     </div>
     <div id="view"></div>
     <div id="gen" hidden>
@@ -85,7 +93,18 @@ export const UI_HTML = `<!doctype html>
         </div>
       </form>
       <div class="err" id="generr"></div>
-      <div id="gallery"></div>
+      <div id="gallery" class="gallery"></div>
+    </div>
+    <div id="art" hidden>
+      <form id="artform" class="row">
+        <input id="artq" type="search" maxlength="100" placeholder="hokusai, monet, poster… (empty: top picks)" aria-label="Search the art catalogue">
+        <button class="primary" id="artbtn">Search</button>
+      </form>
+      <div class="muted" id="artbusy"></div>
+      <div class="err" id="arterr"></div>
+      <div id="artfound" class="found"></div>
+      <div class="row"><button id="artmore" hidden>More</button></div>
+      <div id="artsaved" class="gallery"></div>
     </div>
     <p class="muted" id="viewnote"></p>
   </section>
@@ -151,12 +170,76 @@ function renderGen(s) {
     ? 'Pictures are made by Google (' + (g.model || 'Gemini') + ') from your description; each one costs a few cents. The preview shows a picture as it goes to the display. Click for full size.'
     : (g.why || '');
 }
+// The Art tab: public-domain artworks from the catalogue. What a search found stays in the page
+// (found); the artworks on the NAS come with the status.
+let found = null, artKey = '', searching = false;
+const byline = (it) => [it.artist, it.date].filter(Boolean).join(', ');
+async function artSearch(more) {
+  if (searching) return;
+  searching = true; $('#artbtn').disabled = true; $('#artmore').disabled = true;
+  try {
+    const r = await fetch(u('/api/artworks/search?q=' + encodeURIComponent($('#artq').value.trim()) + '&offset=' + ((more && found && found.next) || 0)));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'The search failed');
+    found = more && found ? { total: j.total, next: j.next, items: found.items.concat(j.items) } : j;
+    found.failed = '';
+  } catch (e) { found = found || { items: [], next: null }; found.failed = e.message || 'The search failed'; }
+  searching = false; $('#artbtn').disabled = false; $('#artmore').disabled = false;
+  artKey = ''; if (last) renderView(last);
+}
+function renderArt(s) {
+  const a = s.artworks || { items: [] };
+  if (!found && !searching) artSearch(false);
+  const pl = s.playlist, deep = s.sleep && s.sleep.mode === 'deep';
+  const showTitle = pl && deep ? 'Now if the display is awake (press its power button first); otherwise at its next change. For one day.'
+    : pl ? 'Replaces the photo for now, for one day' : 'Sends it to the display now';
+  const keepTitle = 'Adds it to the photos the frame picks from: it comes up once per round of the album';
+  const blocked = (!!s.busy && !s.busy.probe) || !!a.busy;
+  const onText = (on) => !on ? '' : on.where === 'frame' ? 'On the frame' : on.where === 'planned' ? 'On the frame from ' + on.label : 'Goes on the frame when the display is next online';
+  const key = JSON.stringify([found && [found.items.length, found.next, found.failed], a.items, a.every, !!a.busy, blocked, showTitle]);
+  if (key !== artKey) {
+    artKey = key;
+    const mine = new Map(a.items.map((it) => [it.id, it]));
+    $('#artfound').innerHTML = !found ? '<p class="muted">Asking the catalogue…</p>'
+      : found.failed && !found.items.length ? '<p class="err">' + esc(found.failed) + '</p>'
+      : !found.items.length ? '<p class="muted">Nothing found.</p>'
+      : found.items.map((it) => {
+        const m = mine.get(it.id);
+        const fit = it.fit === 'shape' ? 'Its shape leaves much of this frame white' : it.fit === 'small' ? 'Small (' + it.width + ' × ' + it.height + '): it will look soft' : '';
+        return '<figure data-id="' + esc(it.id) + '"><a href="' + esc(it.sourceUrl || it.thumb) + '" target="_blank" rel="noopener noreferrer"><img loading="lazy" referrerpolicy="no-referrer" src="' + esc(it.thumb) + '" alt=""></a>'
+          + '<figcaption>' + esc(it.title || 'Untitled') + (byline(it) ? '<br><span class="muted">' + esc(byline(it)) + '</span>' : '') + (fit ? '<br><span class="muted">' + esc(fit) + '</span>' : '') + '</figcaption>'
+          + '<div class="row"><button data-work="show" title="' + esc(showTitle) + '"' + (blocked ? ' disabled' : '') + '>Show on the frame</button>'
+          + (m && m.keep ? '<span class="on">In the rotation</span>' : '<button data-work="keep" title="' + esc(keepTitle) + '"' + (a.busy ? ' disabled' : '') + '>Keep in rotation</button>') + '</div></figure>';
+      }).join('') + (found.failed ? '<p class="err">' + esc(found.failed) + '</p>' : '');
+    $('#artmore').hidden = !(found && found.next != null);
+    $('#artsaved').innerHTML = (a.items.length ? '<strong>On the NAS</strong>' : '') + a.items.map((it) => {
+      const on = onText(it.on);
+      return '<article data-id="' + esc(it.id) + '"><a href="' + u('/img/artwork/' + it.dir + '/preview.png') + '" target="_blank"><img loading="lazy" src="' + u('/img/artwork/' + it.dir + '/thumb.jpg') + '" alt=""></a><div>'
+        + '<div class="prompt">' + esc(it.title || 'Untitled') + '</div>'
+        + '<div class="muted">' + esc([byline(it), it.license].filter(Boolean).join(' · ')) + (it.sourceUrl ? ' · <a href="' + esc(it.sourceUrl) + '" target="_blank" rel="noopener noreferrer">source</a>' : '')
+        + (it.auto ? ' · brought by the frame' : '') + (on ? ' · <span class="on">' + esc(on) + '</span>' : '') + '</div>'
+        + '<div class="row"><button data-work="show" title="' + esc(showTitle) + '"' + (blocked ? ' disabled' : '') + '>Show on the frame</button>'
+        + '<label title="' + esc(keepTitle) + '"><input type="checkbox" data-work="keep"' + (it.keep ? ' checked' : '') + '> Keep in rotation</label>'
+        + '<button data-work="remove" title="Takes it off the NAS">Remove</button>'
+        + (a.every ? '<button data-work="never" title="Takes it off the NAS, and the frame will not bring it by itself again">Never show again</button>' : '') + '</div></div></article>';
+    }).join('');
+  }
+  $('#artbusy').textContent = a.busy ? a.busy.what + '…' : '';
+  $('#arterr').textContent = a.error && !a.busy ? 'Last problem (' + fmt(a.error.at) + '): ' + a.error.message : '';
+  return 'Public-domain artworks from the paperlesspaper art catalogue (Wikimedia Commons, the Metropolitan Museum, the Art Institute of Chicago). An artwork is shown whole, on white'
+    + (a.caption ? ', with its title and artist under it' : '') + '. '
+    + (a.every === 1 ? 'Every photo the frame prepares is one of the catalogue’s top picks (ART_EVERY=1).'
+      : a.every ? 'One in ' + a.every + ' photos the frame prepares is one of the catalogue’s top picks (ART_EVERY).'
+      : 'With ART_EVERY in .env the frame brings one of the top picks by itself every so many photos.');
+}
 function renderView(s) {
   const v = Date.now();
   let html = '', note = '';
   $('#gen').hidden = view !== 'generate';
-  $('#view').hidden = view === 'generate';
+  $('#art').hidden = view !== 'art';
+  $('#view').hidden = view === 'generate' || view === 'art';
   if (view === 'generate') { $('#viewnote').textContent = renderGen(s); return; }
+  if (view === 'art') { $('#viewnote').textContent = renderArt(s); return; }
   if (view === 'preview') {
     if (s.current) { html = '<a href="' + u('/img/current/preview.png?' + v) + '" target="_blank"><img src="' + u('/img/current/preview.jpg?' + s.current.renderedAt) + '" alt="preview"></a>';
       note = s.dither === 'device'
@@ -358,12 +441,12 @@ function render(s) {
   $('#info').innerHTML = rows.map(([k, v]) => '<dt>' + k + '</dt><dd>' + v + '</dd>').join('');
   const dup = s.lastError && ((s.sleep && s.sleep.error === s.lastError.message) || (hl && hl.text === s.lastError.message)); // already shown under Display, or at the top
   $('#error').textContent = s.lastError && !dup ? 'Last problem (' + fmt(s.lastError.at) + '): ' + s.lastError.message : '';
-  $('#history').innerHTML = (s.history || []).slice(0, 8).map((h) => '<dt>' + fmt(h.at) + '</dt><dd>' + (h.ok ? (h.missed ? '<span class="err">' + esc(h.kind) + '</span>' : esc(h.kind)) + (h.dates && h.dates.length ? ' · ' + h.dates.map(day).join(' + ') : '') + (h.battery != null ? ' · battery ' + h.battery + '%' : '') + (h.waited ? ' · waited ' + h.waited + ' s for the display' : '') : '<span class="err">' + esc(h.error) + '</span>') + '</dd>').join('');
+  $('#history').innerHTML = (s.history || []).slice(0, 8).map((h) => '<dt>' + fmt(h.at) + '</dt><dd>' + (h.ok ? (h.missed ? '<span class="err">' + esc(h.kind) + '</span>' : esc(h.kind)) + (h.dates && h.dates.length ? ' · ' + h.dates.map((d, i) => h.titles && h.titles[i] ? esc('“' + h.titles[i] + '”') : day(d)).join(' + ') : '') + (h.battery != null ? ' · battery ' + h.battery + '%' : '') + (h.waited ? ' · waited ' + h.waited + ' s for the display' : '') : '<span class="err">' + esc(h.error) + '</span>') + '</dd>').join('');
   renderView(s);
 }
 async function refresh() {
   try { const r = await fetch(u('/api/status')); if (r.status === 404) throw 0; render(await r.json()); } catch (e) { $('#state').textContent = 'offline'; }
-  setTimeout(refresh, last && (last.busy || (last.generate && last.generate.busy)) ? 2500 : 15000);
+  setTimeout(refresh, last && (last.busy || (last.generate && last.generate.busy) || (last.artworks && last.artworks.busy)) ? 2500 : 15000);
 }
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   showTab(b.dataset.view); history.replaceState(null, '', view === 'preview' ? location.pathname + location.search : '#' + view); if (last) renderView(last);
@@ -403,6 +486,25 @@ $('#gallery').addEventListener('click', async (e) => {
 });
 $('#gallery').addEventListener('change', (e) => {
   if (e.target.dataset.art === 'keep') post('/api/art/keep', { id: e.target.closest('article').dataset.id, keep: e.target.checked });
+});
+// The Art tab: a search, and one request per button.
+$('#artform').onsubmit = (e) => { e.preventDefault(); found = null; artKey = ''; if (last) renderView(last); };
+$('#artmore').onclick = () => artSearch(true);
+$('#art').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-work]');
+  if (!b) return;
+  const id = b.closest('[data-id]').dataset.id;
+  const act = b.dataset.work;
+  const item = ((last && last.artworks && last.artworks.items) || []).find((x) => x.id === id);
+  if (act === 'remove' && item && item.keep && !confirm('Remove this artwork? It is in the rotation.')) return;
+  b.disabled = true;
+  const ok = act === 'show' ? await post('/api/artworks/show', { id })
+    : act === 'keep' ? await post('/api/artworks/keep', { id, keep: true })
+    : await post('/api/artworks/remove', { id, never: act === 'never' });
+  if (!ok) b.disabled = false;
+});
+$('#art').addEventListener('change', (e) => {
+  if (e.target.dataset.work === 'keep') post('/api/artworks/keep', { id: e.target.closest('[data-id]').dataset.id, keep: e.target.checked });
 });
 refresh();
 </script>

@@ -2,7 +2,7 @@
 # or anywhere with Docker (arm64 Macs included).
 FROM node:22-bookworm-slim
 
-# Fonts for the test pattern's labels; tzdata so TZ works for the schedule.
+# Fonts for the labels of the test pattern and under the artworks; tzdata so TZ works for the schedule.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-dejavu-core tzdata \
  && rm -rf /var/lib/apt/lists/*

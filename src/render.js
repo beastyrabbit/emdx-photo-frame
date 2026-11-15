@@ -51,6 +51,66 @@ export function pairCellAspect(width, height, gap) {
   return c.w / c.h;
 }
 
+// An artwork is shown whole, on white, with a label under it (its title; its artist and date):
+// the room it gets, and the sizes of the label's two lines. `captioned`: leave room for the label.
+export function artworkLayout(cfg, captioned = true) {
+  const { width, height } = cfg.panel;
+  const s = Math.min(width, height);
+  const m = cfg.layout.margin;
+  const title = Math.max(10, Math.round(s * 0.024));
+  const by = Math.max(9, Math.round(s * 0.019));
+  const gap = Math.round(s * 0.02);
+  const band = captioned ? gap + Math.round(title * 1.4) + Math.round(by * 1.5) : 0;
+  return { rect: { x: m, y: m, w: Math.max(1, width - 2 * m), h: Math.max(1, height - 2 * m - band) }, title, by, gap, band };
+}
+
+// The label of a plan's artwork ({ title, by }), or null: none to draw (ART_CAPTION=false, or
+// the catalogue knows neither title nor artist).
+function captionOf(cfg, plan) {
+  const label = plan.kind === 'artwork' && cfg.art?.caption !== false ? plan.items[0]?.art : null;
+  return label && (label.title || label.by) ? label : null;
+}
+
+// What the label's font (DejaVu Serif, in the container) can draw: Latin, Greek and Cyrillic.
+const DRAWABLE = /^[\u0020-\u024f\u0370-\u052f\u1e00-\u1fff\u2010-\u2027\u2030-\u205e]+$/;
+
+// Fit a line of the label into `maxWidth` pixels (by a guess at the letters' width), cutting at
+// a word.
+export function clipLine(text, maxWidth, size) {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!t || !DRAWABLE.test(t)) return '';
+  const max = Math.max(8, Math.floor(maxWidth / (size * 0.56)));
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:–-]+$/, '')}…`;
+}
+
+// Draw the label under the artwork (`placed`: where the artwork went), centred, in black.
+async function drawCaption(canvas, cfg, placed, label) {
+  const { width, height } = cfg.panel;
+  const L = artworkLayout(cfg, true);
+  const top = placed.y + placed.h;
+  const h = Math.min(L.band, height - top);
+  if (h < L.title) return;
+  const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = [];
+  let y = L.gap;
+  for (const [text, size, room] of [[label.title, L.title, 1.4], [label.by, L.by, 1.5]]) {
+    const line = clipLine(text, L.rect.w, size);
+    if (!line) continue;
+    lines.push(`<text x="${width / 2}" y="${y + size}" font-size="${size}" text-anchor="middle" font-family="DejaVu Serif, Georgia, 'Times New Roman', serif">${xml(line)}</text>`);
+    y += Math.round(size * room);
+  }
+  if (!lines.length) return;
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}">${lines.join('')}</svg>`);
+  const layer = await sharp(svg).ensureAlpha().raw().toBuffer();
+  // Snapped to pure black, so that it stays crisp on the panel (as on the test pattern).
+  for (let i = 0, p = top * width * 3; i < width * h; i++, p += 3) {
+    if (layer[i * 4 + 3] > 110) { canvas[p] = 0; canvas[p + 1] = 0; canvas[p + 2] = 0; }
+  }
+}
+
 // Plan -> list of cells: { rect, fit: 'cover' | 'contain' }. `looks`: what was found in each
 // photo ({ aspect, faces }, see lookAt), once they are downloaded.
 export function planCells(cfg, plan, looks = null) {
@@ -64,6 +124,7 @@ export function planCells(cfg, plan, looks = null) {
     const rects = pairCells(width, height, cfg.layout.gap, aspects, limits);
     return rects.map((rect) => ({ rect, fit: 'cover' }));
   }
+  if (plan.kind === 'artwork') return [{ rect: artworkLayout(cfg, !!captionOf(cfg, plan)).rect, fit: 'contain' }];
   if (plan.kind === 'fit') {
     const m = cfg.layout.margin;
     return [{ rect: { x: m, y: m, w: width - 2 * m, h: height - 2 * m }, fit: 'contain' }];
@@ -152,15 +213,17 @@ export async function composeCanvas(cfg, plan, inputs) {
   const canvas = Buffer.alloc(width * height * 3, 255);
   // Look for faces first: in a pair they also decide how the two photos share the frame.
   const looks = [];
-  if ((cfg.layout.faces ?? 'keep') !== 'off' && plan.kind !== 'fit') {
+  if ((cfg.layout.faces ?? 'keep') !== 'off' && plan.kind !== 'fit' && plan.kind !== 'artwork') {
     for (const input of inputs) looks.push(await lookAt(input));
   }
   const cells = planCells(cfg, plan, looks.length ? looks : null);
+  const placed = [];
   for (let c = 0; c < cells.length; c++) {
     const cell = cells[c];
     const img = await prepareCell(inputs[c], cell, cfg, looks[c]);
     const ox = cell.rect.x + Math.floor((cell.rect.w - img.width) / 2);
     const oy = cell.rect.y + Math.floor((cell.rect.h - img.height) / 2);
+    placed.push({ x: ox, y: oy, w: img.width, h: img.height });
     for (let y = 0; y < img.height; y++) {
       const cy = oy + y;
       if (cy < 0 || cy >= height) continue;
@@ -169,6 +232,8 @@ export async function composeCanvas(cfg, plan, inputs) {
       img.data.copy(canvas, dst, src, src + img.width * 3);
     }
   }
+  const label = captionOf(cfg, plan);
+  if (label) await drawCaption(canvas, cfg, placed[0], label);
   return canvas;
 }
 

@@ -171,12 +171,7 @@ export class Art {
 
   // Add a picture to the photos read last, or take it out, without reading the album anew.
   syncLibrary(item, keep) {
-    const lib = this.state.library;
-    if (!lib?.items) return;
-    lib.items = lib.items.filter((it) => it.id !== artId(item.id));
-    if (keep) lib.items.push(this.artItem(item));
-    const count = lib.items.filter((it) => it.source === 'generated').length;
-    lib.albums = [...(lib.albums || []).filter((a) => a.url !== 'generated'), ...(count ? [{ url: 'generated', title: 'Generated', count }] : [])];
+    this.libraryItem(this.artItem(item), keep, { url: 'generated', title: 'Generated' });
   }
 
   // "Keep in rotation": the picture joins the album's photos and comes up once per round.
@@ -219,12 +214,7 @@ export class Art {
   // Where a gallery picture is: 'frame' (on it), 'waiting' (goes out when the display is next
   // online) or 'planned' (for the change at `at`); null: nowhere.
   artOn(item, now = Date.now()) {
-    const id = artId(item.id);
-    const c = this.state.current;
-    if (c?.ids?.includes(id) && !(this.daily?.st.replaced)) return { where: c.pushed || c.dryRun ? 'frame' : 'waiting' };
-    const slot = this.daily?.st.slots.find((s) => s.ids?.includes(id));
-    if (!slot) return null;
-    return slot.at > now ? { where: 'planned', at: slot.at, label: this.daily.label(slot.at) } : { where: 'waiting' };
+    return this.whereOn(artId(item.id), now);
   }
 
   artStatus() {

@@ -11,6 +11,7 @@ It runs as a single Docker container. It was written for a Synology NAS (a DS420
 - **Deep sleep between photos:** in playlist mode the display changes the photo itself every night and sleeps deeply in between. It comes online briefly after each change, and that is when the NAS checks the battery and sends the next batch of photos.
 - **Several frames:** one service can look after more than one display, each with its own settings, album round and page.
 - **Pictures from a prompt:** describe a picture on the web page and Google's image model draws it for the frame, as a one-off or to keep among the album's photos (optional; needs a Google API key).
+- **Public-domain art:** search a catalogue of paintings, prints and posters on the web page and put one on the frame, keep it among the photos, or let the frame bring a masterpiece by itself every few days. Shown whole, with its title and artist under it.
 
 What we found out about the EM32DX along the way (sleep, wake-up, playlists, dithering): [docs/findings.md](docs/findings.md).
 
@@ -105,7 +106,31 @@ The **Generate** tab makes a picture from a description and puts it on the frame
 
 **Costs:** `GENERATE_DAILY_MAX` (20) caps the requests per day; the tab shows the count. A request that Google refuses outright (wrong key, no quota) is not counted; one that reached the model is, picture or not. `GENERATE_SIZE=1K` is cheaper (about 3 cents) and gets enlarged for the EM32DX; the default `2K` is a little larger than its panel.
 
-## 7. Settings (`.env`)
+## 7. Public-domain art
+
+The **Art** tab puts paintings, prints and posters on the frame. They come from the [paperlesspaper art catalogue](https://github.com/paperlesspaper/paperlesspaper-art), which lists some 12,000 works from Wikimedia Commons, the Metropolitan Museum and the Art Institute of Chicago, with a rating by its curators. It needs no key and costs nothing.
+
+**Using it** (`http://<NAS-IP>:8321/#art`)
+
+- The tab opens with the catalogue's top picks (about 550 works in November 2026). **Search** looks through everything it has in the public domain: an artist, a subject, *poster*, *botanical*.
+- **Show on the frame** shows an artwork for one day, in the place of a photo; **Keep in rotation** adds it to the photos the frame picks from, where it comes up once per round. Both work as on the Generate tab (section 6), and both download the artwork to the NAS first.
+- **On the NAS** lists the artworks that were downloaded, with a link to where each comes from. **Remove** takes one off again. The NAS keeps the last hundred, and those kept in the rotation on top of that, in the data volume under `artworks/`.
+- A note under a search result says when it won't look its best on this frame: a wide painting on a tall frame leaves much of it white, and a picture of few pixels looks soft.
+
+**How an artwork is shown.** Whole: never cropped, and never paired with a photo. It sits on white inside the margin (`FIT_MARGIN`), with its title, artist and date under it. `ART_CAPTION=false` leaves the label out. Titles and names come from the catalogue, which often has them as a file name from Wikimedia Commons; the frame tidies them (*Claude Monet - Vue d'un port - Google Art Project* becomes *Vue d'un port*), and leaves them as they are where it can't tell.
+
+**Artworks by themselves** (`ART_EVERY`). With `ART_EVERY=3`, every third photo the frame prepares is one of the catalogue's top picks: two photos, then an artwork. `ART_EVERY=1` on a frame without an album makes it a frame of artworks only.
+
+- The frame only brings artworks that suit it: a shape that covers at least half the frame, and enough pixels. On a portrait EM32DX that is a little over half of the top picks.
+- Each comes once before any repeats, in a shuffled order. They are listed under **On the NAS** as *brought by the frame*; **Never show again** there removes one for good, and **Keep in rotation** moves one over to the photos.
+- The list of top picks is read once a week. If the catalogue can't be reached, the list read last serves; if an artwork can't be downloaded, a photo takes the turn and the artwork comes next time.
+- In playlist mode the artworks take their slots in the plan like photos, so the **Playlist** tab shows them days ahead.
+
+**What goes to the catalogue:** the words you search for, and the requests for the pictures. Nothing about your photos or your display. The thumbnails of a search are loaded by your browser, straight from the catalogue's storage. Without `ART_EVERY` the NAS only contacts the catalogue when someone uses the tab.
+
+**Public domain** is what the catalogue says of each work, as Wikimedia Commons or the museum lists it. The rules differ per country, and a few of the catalogue's entries are more recent than you might expect (film posters from the 1950s): for a frame at home that hardly matters, for anything public, check the source link.
+
+## 8. Settings (`.env`)
 
 | Variable | Default | |
 |---|---|---|
@@ -138,6 +163,9 @@ The **Generate** tab makes a picture from a description and puts it on the frame
 | `GEMINI_API_KEY` | — | A Google AI Studio API key: turns on the Generate tab (together with `UI_PASSWORD`) |
 | `GENERATE_MODEL`, `GENERATE_SIZE` | gemini-nano-banana-2.1, 2K | The image model, and the size it draws at (`1K`, `2K` or `4K`) |
 | `GENERATE_DAILY_MAX` | 20 | Requests to Google per day, at most |
+| `ART_EVERY` | 0 | One in this many photos is an artwork from the catalogue's top picks (3: two photos, then an artwork; 1: artworks only). `0`: artworks only when chosen on the Art tab |
+| `ART_CAPTION` | true | The title, artist and date under an artwork |
+| `ART_API_URL` | https://art.paperlesspaper.de | The art catalogue (another server running [paperlesspaper-art](https://github.com/paperlesspaper/paperlesspaper-art) works too) |
 | `NOTIFY_URL` | — | Where to post a line when a frame needs a hand (an ntfy topic address) |
 | `FRAMES`, `FRAME_NAME` | —, Photo frame | Several frames: their names (see below). One frame: its name on the page |
 
@@ -158,9 +186,9 @@ KITCHEN_ALBUM_URLS=https://photos.app.goo.gl/...  # its own album
 KITCHEN_SCHEDULE=30 7 * * *
 ```
 
-Each frame keeps its own state (its round of the album, its playlist, its history, its generated pictures) in the data volume under `frames/<name>`, and has its own page (`?frame=kitchen`). The web server, its port and password, and the time zone of the log are shared. When you go from one frame to several, the first name in `FRAMES` takes over the state of the frame you had, so put that one first and keep it there. The log says which frame each line is about. Commands take `--frame <name>`.
+Each frame keeps its own state (its round of the album, its playlist, its history, its generated pictures and artworks) in the data volume under `frames/<name>`, and has its own page (`?frame=kitchen`). The web server, its port and password, and the time zone of the log are shared. When you go from one frame to several, the first name in `FRAMES` takes over the state of the frame you had, so put that one first and keep it there. The log says which frame each line is about. Commands take `--frame <name>`.
 
-## 8. Commands
+## 9. Commands
 
 Run them on the NAS with `sudo docker exec emdx-photo-frame node src/index.js <command>`:
 
@@ -174,7 +202,7 @@ Run them on the NAS with `sudo docker exec emdx-photo-frame node src/index.js <c
 
 To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-photo-frame . && docker run --rm -p 8321:8321 --env-file .env -e EMDX_HOST= -v "$PWD/data:/data" emdx-photo-frame`, then open http://localhost:8321.
 
-## 9. How it works
+## 10. How it works
 
 1. **Album.** Google closed the Photos Library API for existing albums in March 2025, and its alternatives are pick-by-hand or partner-only. So this reads the album the way its public web page does: the first page of items is embedded in the HTML, and later pages come from the same endpoint the page uses. This is unofficial and may break if Google changes the page; the last good list is cached meanwhile. Videos are skipped.
 2. **Layout.** libvips' attention-based smart crop (sharp), with EXIF orientation honoured. Pairs split the frame in proportion to the photos' shapes, so both lose about the same amount. Faces are found on the NAS with [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) (OpenCV's detector, MIT, in `models/`) on ONNX Runtime's WebAssembly build: once over the whole photo and once in overlapping tiles, for the small faces of a group shot. When the attention crop already holds every face with room to spare it stays; otherwise the crop moves, a pair's split shifts towards the photo that needs the room, and as a last resort (`FACES=keep`) the photo is cropped less and gets a white band. Faces much smaller than the largest one count as passers-by and are ignored.
@@ -182,8 +210,9 @@ To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-phot
 4. **Dither.** By default the display dithers the toned photo itself. With `DITHER=local` the NAS maps colours into the gamut of the six measured inks and dithers with a blue-noise mask, writing pure ink colours into the PNG.
 5. **Sending.** The NAS connects with Samsung MDC (TLS + PIN) and points the display at a small JSON manifest on its own web server; the display downloads it and the images in it. A playlist is the same manifest with several images, each with its own display time in milliseconds, as Samsung's E-Paper app sends it. The trick and the MDC client come from [node-samsung-emdx](https://github.com/WeeJeWel/node-samsung-emdx) and [@weejewel/samsung-mdc](https://github.com/WeeJeWel/node-samsung-mdc) by Emile Nijssen; the playlist format from Samsung's Android app.
 6. **Pictures from a prompt.** One request to the Gemini API's Interactions endpoint, asking for an image in the shape closest to the frame's (9:16 for a portrait EM32DX). The picture is kept as Google sent it and goes through the same crop, tone and dither steps as a photo whenever it is shown. In playlist mode a one-off takes a slot in the plan, so it reaches the display with the next playlist.
+7. **Art.** The NAS asks the catalogue's API for its top picks or for a search, and downloads the largest version it serves (3000 pixels on the long side at most; the originals are not public). The picture is kept as it came and laid out anew whenever it is shown: scaled to fit inside the margins, with the label drawn under it in black. Only the catalogue's API is used, none of its code (which is GPL-3.0).
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 - **"accepted the command but never downloaded"**: the display can't reach `http://SERVER_HOST:HTTP_PORT`. Check `SERVER_HOST`, the DSM firewall, and that the display and the NAS are on the same network.
 - **"Incorrect PIN"**: check `EMDX_PIN`. After several wrong PINs the display may block MDC for a while.
@@ -196,6 +225,8 @@ To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-phot
 - **"The display did not go to sleep"**: it took the power-off command but kept answering, so it is using battery. The NAS tries again at every sleep check.
 - **Album errors**: run `check-album`. If it fails while the link opens fine in a browser, Google probably changed the page format; the frame keeps using the cached list meanwhile.
 - **"No picture"** on the Generate tab: the line says what Google answered. *Refused the API key*: check `GEMINI_API_KEY`. *Refused the request … billing*: switch on billing for the key's project in Google AI Studio. *Quota is used up*: wait, or raise the limits there. *Sent no picture*: the model or its safety filter declined; say it differently.
+- **The Art tab finds nothing, or "Could not reach the art catalogue"**: the NAS needs to reach `art.paperlesspaper.de` (the search) and the catalogue's storage (the pictures) over HTTPS. *Refused the request … it may ask for a key now*: the catalogue's makers have closed it to the public; artworks already on the NAS keep working. If thumbnails stay grey while titles show, your browser can't reach the catalogue's storage.
+- **An artwork's label says something odd**: it is what the catalogue has, tidied a little. The source link under **On the NAS** shows where it comes from; `ART_CAPTION=false` shows the artworks without labels.
 - **Photos too dark or flat on the panel**: try `SATURATION=1.15`, `CONTRAST=0.2` or `GAMMA=1.15`.
 
 Logs: Container Manager → Container → emdx-photo-frame → Log.
@@ -207,13 +238,13 @@ npm install
 npm test     # unit tests, and end-to-end runs against a fake EMDX and a mock album (needs openssl)
 ```
 
-The code, by subject: `app.js` (one frame: its lock, push mode, status), `daily.js` and `playlist.js` (playlist mode and its timing), `library.js` (album, picking, rendering), `sleep.js`, `checks.js` and `cleaning.js` (sleep, the periodic looks at the display, the panel cleaning), `display.js` (Samsung MDC), `server.js` and `ui.js` (the web server and page), `art.js` and `sources/gemini.js` (pictures from a prompt), `config.js` (settings, frames).
+The code, by subject: `app.js` (one frame: its lock, push mode, status), `daily.js` and `playlist.js` (playlist mode and its timing), `library.js` (album, picking, rendering), `sleep.js`, `checks.js` and `cleaning.js` (sleep, the periodic looks at the display, the panel cleaning), `display.js` (Samsung MDC), `server.js` and `ui.js` (the web server and page), `art.js` and `sources/gemini.js` (pictures from a prompt), `artworks.js` and `sources/artCatalogue.js` (public-domain art), `config.js` (settings, frames).
 
 The fake display (`test/helpers/fakeEmdx.js`) speaks MDC over TLS, downloads content like the real one, plays playlists, sleeps, and wakes on Wake-on-LAN or after a playlist change.
 
 ## Credits
 
-The measured palette comes from [epdoptimize](https://github.com/paperlesspaper/epdoptimize). The album item format follows [google-photos-album-image-url-fetch](https://github.com/yumetodo/google-photos-album-image-url-fetch) and [gphotos-scraper](https://github.com/jmsalazardev/gphotos-scraper).
+The measured palette comes from [epdoptimize](https://github.com/paperlesspaper/epdoptimize), and the artworks from the catalogue of [paperlesspaper-art](https://github.com/paperlesspaper/paperlesspaper-art), both by paperlesspaper. The album item format follows [google-photos-album-image-url-fetch](https://github.com/yumetodo/google-photos-album-image-url-fetch) and [gphotos-scraper](https://github.com/jmsalazardev/gphotos-scraper).
 
 ## License
 
