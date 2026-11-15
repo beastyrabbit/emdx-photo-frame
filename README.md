@@ -6,6 +6,7 @@ It runs as a single Docker container. It was written for a Synology NAS (a DS420
 
 - **Shuffle without repeats:** every photo in the album is shown once before anything repeats. Photos added to the album later join the current round.
 - **Odd shapes get paired:** on a portrait frame, landscape and square photos are shown two at a time, preferably two taken around the same time. Portrait photos fill the frame, smart-cropped around the most interesting part.
+- **People stay in the picture:** the NAS finds the faces in each photo and places the crop around them. A group that is wider than the crop is cropped less, with a white band, so nobody is cut off.
 - **The display does the final dithering:** the NAS crops and tones the photo, and the panel's own algorithm turns it into ink dots. A NAS-side ditherer is included as `DITHER=local`, but on the EM32DX the panel's own processing looked better.
 - **Deep sleep between photos:** in playlist mode the display changes the photo itself every night and sleeps deeply in between. It comes online briefly after each change, and that is when the NAS checks the battery and sends the next batch of photos.
 - **Several frames:** one service can look after more than one display, each with its own settings, album round and page.
@@ -104,6 +105,7 @@ The same status is available as JSON at `/api/status` (`?frame=<name>` with seve
 | `RUN_ON_START` | false | When the service starts: send a photo right away (push mode), or the playlist if one is due (playlist mode) |
 | `RETRIES`, `RETRY_MINUTES` | 3, 20 | Push mode: retries of an update that couldn't reach the display |
 | `ODD_PHOTOS` | pair | `pair`, `crop` (smart-crop to fill) or `fit` (white margin) |
+| `FACES` | keep | `keep`: never crop a face away (a white band when a group doesn't fit the frame's shape). `prefer`: always fill the frame, with as many faces as fit. `off`: crop without looking for faces |
 | `DITHER` | device | The display dithers. `local` dithers on the NAS instead |
 | `SATURATION`, `CONTRAST` | 1.0, 0.1 | Tone tweaks before sending (1.3, 0.25 with `DITHER=local`) |
 | `GAMMA`, `SHARPEN` | 1.0, 0.8 | Midtone lift and sharpening |
@@ -148,7 +150,7 @@ To try it without a display, leave `EMDX_HOST` empty: `docker build -t emdx-phot
 ## 8. How it works
 
 1. **Album.** Google closed the Photos Library API for existing albums in March 2025, and its alternatives are pick-by-hand or partner-only. So this reads the album the way its public web page does: the first page of items is embedded in the HTML, and later pages come from the same endpoint the page uses. This is unofficial and may break if Google changes the page; the last good list is cached meanwhile. Videos are skipped.
-2. **Layout.** libvips' attention-based smart crop (sharp), with EXIF orientation honoured. Pairs split the frame in proportion to the photos' shapes, so both lose about the same amount.
+2. **Layout.** libvips' attention-based smart crop (sharp), with EXIF orientation honoured. Pairs split the frame in proportion to the photos' shapes, so both lose about the same amount. Faces are found on the NAS with [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) (OpenCV's detector, MIT, in `models/`) on ONNX Runtime's WebAssembly build: once over the whole photo and once in overlapping tiles, for the small faces of a group shot. When the attention crop already holds every face with room to spare it stays; otherwise the crop moves, a pair's split shifts towards the photo that needs the room, and as a last resort (`FACES=keep`) the photo is cropped less and gets a white band. Faces much smaller than the largest one count as passers-by and are ignored.
 3. **Tone.** Gentle auto-levels, an S-curve and optionally a saturation boost, in Oklab.
 4. **Dither.** By default the display dithers the toned photo itself. With `DITHER=local` the NAS maps colours into the gamut of the six measured inks and dithers with a blue-noise mask, writing pure ink colours into the PNG.
 5. **Sending.** The NAS connects with Samsung MDC (TLS + PIN) and points the display at a small JSON manifest on its own web server; the display downloads it and the images in it. A playlist is the same manifest with several images, each with its own display time in milliseconds, as Samsung's E-Paper app sends it. The trick and the MDC client come from [node-samsung-emdx](https://github.com/WeeJeWel/node-samsung-emdx) and [@weejewel/samsung-mdc](https://github.com/WeeJeWel/node-samsung-mdc) by Emile Nijssen; the playlist format from Samsung's Android app.

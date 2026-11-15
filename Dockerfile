@@ -13,8 +13,13 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# onnxruntime-web (the face detector's runtime) ships builds for every kind of browser; Node
+# uses one of them, the rest is 130 MB of ballast.
+RUN npm ci --omit=dev && npm cache clean --force \
+ && find node_modules/onnxruntime-web/dist -type f \
+      ! -name 'ort.node.min.*js' ! -name 'ort-wasm-simd-threaded.mjs' ! -name 'ort-wasm-simd-threaded.wasm' -delete
 COPY src ./src
+COPY models ./models
 
 VOLUME /data
 # The web page and what the display downloads.

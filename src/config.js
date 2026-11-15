@@ -289,6 +289,9 @@ export function loadConfig(env = process.env, asked = null) {
       odd: oneOf('ODD_PHOTOS', 'pair', ['pair', 'crop', 'fit']),
       // A photo counts as "odd" when filling the whole frame would crop away more than this fraction.
       oddThreshold: num('ODD_THRESHOLD', 0.35, { min: 0, max: 1 }),
+      // Faces: `keep` never crops a face away (a white band when a group needs more than the
+      // frame's shape has), `prefer` always fills the frame with as many faces as fit, `off`.
+      faces: oneOf('FACES', 'keep', ['keep', 'prefer', 'off']),
       gap: num('PAIR_GAP', 20, { min: 0, int: true }),
       margin: num('FIT_MARGIN', 48, { min: 0, int: true }),
     },
