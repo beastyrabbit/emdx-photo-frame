@@ -1,5 +1,105 @@
 # EMDX photo frame
 
+## About this fork
+
+This is a fork of [jdemeul/emdx-photo-frame](https://github.com/jdemeul/emdx-photo-frame), by Jonas Demeulemeester, MIT licensed. Everything from [the upstream description](#what-upstream-does) on is upstream's documentation and still describes how the service works today. This section covers only what differs here: why the fork exists, what it has changed so far, and what it plans to add.
+
+### Why a separate repository
+
+Upstream looks after each frame on its own. Every frame gets its own album, its own shuffle round and its own playlist. We want to run three to five EM32DX frames on battery from **one shared pool of pictures**, and that changes the part of the service that decides which picture goes where:
+
+- **No picture on two frames at once.** Pictures come from one pool, and a picture belongs to one frame for as long as that frame might still show it.
+- **"Show this next" and "show this now".** Pick or upload pictures on a phone, then press the frame's button. The service waits for the frame to come online and sends them straight away.
+- **Event mode.** A temporary set of pictures in a fixed order, for example for a birthday, after which the frame goes back to the pool.
+- **Upload from a phone**, and later pictures from Immich.
+
+A clean rewrite would have to port the device handling as well: deep sleep, waking up after a change, the fresh playlist after every change that keeps the EM32DX from getting stuck, restart recovery, and the tests with a fake display. Upstream worked all of that out on a real EM32DX ([findings](docs/findings.md)), and its tests cover it against a fake display. So we keep that part unchanged and add new modules around the picture selection. We also need our own container image for our Kubernetes deployment.
+
+We merge upstream changes from the `upstream` remote from time to time. Generic fixes can be offered back.
+
+### Status
+
+| Change | Status |
+| --- | --- |
+| Tests and container image build on every push; a `vX.Y.Z` tag publishes `ghcr.io/beastyrabbit/emdx-photo-frame:X.Y.Z` ([workflow](.github/workflows/release-image.yaml)) | done, `v1.0.0` (upstream code unchanged) |
+| This section, `AGENTS.md`, lefthook with gitleaks | done |
+| Hardware check of the unchanged upstream: one week of daily changes in deep sleep, then every 48 and 72 hours, with battery readings and photos of the panel | running since 18 November 2026 |
+| Shared pool with no duplicates across frames | planned |
+| Next/now override, delivered when the button wakes the frame | planned |
+| Event mode | planned |
+| Upload from a phone | planned |
+| Change every N days (a cron step such as `*/2` restarts at each month's end) | planned |
+| Immich as a picture source | planned |
+
+The planned items wait for the hardware check and for a written extension design. Their exact shape may still change.
+
+### How the planned flow differs
+
+Upstream today, per frame: an album or folder feeds that frame's shuffle round, the service renders the next days and sends them as the display's own playlist, the display changes the picture by itself, and right after each change, while it is briefly online, it gets a fresh playlist.
+
+The fork keeps that device cycle (grey below) and puts a shared pool, an allocator and an override queue in front of it (orange):
+
+```mermaid
+flowchart LR
+    classDef new fill:#fde3c8,stroke:#d9822b,color:#3b2a1a
+    classDef kept fill:#e8e8e8,stroke:#888,color:#222
+
+    subgraph Sources
+        folder[Folder / album]:::kept
+        phone[Phone upload]:::new
+        immich[Immich]:::new
+    end
+
+    pool[(Shared pool)]:::new
+    alloc[Allocator<br/>one frame per picture]:::new
+    queue[Override and event queue<br/>per frame]:::new
+
+    folder --> pool
+    phone --> pool
+    immich --> pool
+    pool --> alloc
+    phone -- "next / now" --> queue
+
+    subgraph PerFrame[Per frame, upstream lifecycle]
+        plan[Next ~3 pictures,<br/>rendered ahead]:::kept
+        send[Send playlist<br/>when the frame is online]:::kept
+        frame[EM32DX in deep sleep<br/>changes by itself]:::kept
+    end
+
+    alloc --> plan
+    queue --> plan
+    plan --> send --> frame
+    frame -- "online ~10-20 s<br/>after each change" --> send
+```
+
+The override path is the main new behaviour. Today a picture for a sleeping frame waits for its next scheduled change. In the fork it goes out the moment someone presses the frame's button:
+
+```mermaid
+sequenceDiagram
+    actor Owner
+    participant UI as Web page (phone)
+    participant Svc as Service
+    participant Frame as EM32DX (deep sleep)
+
+    Owner->>UI: pick or upload pictures, mark "now"
+    UI->>Svc: queue for this frame
+    Svc->>Svc: render ahead
+    loop every few seconds, for up to ~12 h
+        Svc-->>Frame: is TCP 1515 reachable?
+    end
+    Owner->>Frame: press the power button
+    Frame-->>Svc: reachable
+    Svc->>Frame: log in, send playlist starting with the queued picture
+    Frame->>Frame: shows it, goes back to deep sleep
+    Note over Svc,Frame: later changes continue from the pool
+```
+
+### Working on this fork
+
+See [AGENTS.md](AGENTS.md).
+
+## What upstream does
+
 A small service for a NAS that shows a different photo every day from a shared Google Photos album on a Samsung EMDX colour e-paper display. It picks the photo, crops it for the frame and sends it to the display over the network. In playlist mode it sends weeks of photos at once and the display changes them itself, so it can stay in deep sleep in between. A web page on the NAS shows what is on the frame and what comes next.
 
 It runs as a single Docker container. It was written for a Synology NAS (a DS420+, with a 32" EM32DX hung in portrait), but any always-on Docker host on the same network as the display will do.
