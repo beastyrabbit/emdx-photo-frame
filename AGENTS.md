@@ -19,6 +19,6 @@ Project purpose, status, decisions and hardware findings live in memex: project 
 
 ## Releases
 
-- Pushing a `vX.Y.Z` tag runs [the release workflow](.github/workflows/release-image.yaml), which tests and publishes `ghcr.io/beastyrabbit/emdx-photo-frame:X.Y.Z`. Other pushes and pull requests only test and build.
+- Pushing a `vX.Y.Z` tag runs [the release workflow](.github/workflows/release-image.yaml), which tests and publishes `ghcr.io/beastyrabbit/emdx-photo-frame:X.Y.Z`. Pull requests and pushes to `main` only test and build.
 - The deployment lives in the `kub-homelab` repository, which picks up new tags through Flux image automation. Change deployment settings there, under that repository's rules.
 - A release is done when the new version runs in the cluster and the changed flow was checked on the real frame.
