@@ -14,7 +14,7 @@ import { ManagerStore } from '../src/manager/store.js';
 import { Secrets } from '../src/manager/secrets.js';
 import { cadenceClock, cadenceFromCron } from '../src/manager/clock.js';
 import { tcpProbe } from '../src/manager/runtime.js';
-import { normalize } from '../src/manager/media.js';
+import { normalize, MAX_FILE, MIN_FREE } from '../src/manager/media.js';
 import { batteryEstimate } from '../src/manager/status.js';
 import { Immich } from '../src/manager/integrations.js';
 import { createServer } from '../src/server.js';
@@ -100,6 +100,148 @@ async function setup(t, { fake, count = 12, live = false } = {}) {
   const frame = manager.frame('main');
   return { manager, frame, data, photos, env, original, seeds, model };
 }
+
+test('release #1: adoption preserves real paths, skips bad/hidden files, serves health before decoding and blocks actions', async (t) => {
+  const { seeds, model, env, data, photos } = await setup(t, { count: 0 });
+  const nested = path.join(photos, '2024', 'IMG.jpg');
+  const art = path.join(data, 'artworks', 'kept.jpg');
+  for (const file of [nested, art, path.join(photos, '.hidden.jpg'), path.join(photos, '@eaDir', 'cache.jpg')]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    await sharp({ create: { width: 120, height: 80, channels: 3, background: '#ac7020' } }).jpeg().toFile(file);
+  }
+  fs.writeFileSync(path.join(photos, 'corrupt.jpg'), 'not pixels');
+  const oversized = path.join(photos, 'oversized.jpg');
+  fs.closeSync(fs.openSync(oversized, 'w'));
+  fs.truncateSync(oversized, MAX_FILE + 1);
+  const legacy = { version: 1, current: { ids: ['file:missing.jpg'], since: Date.now() }, excluded: {}, history: [], batteryLog: [], library: { items: [
+    { id: 'file:2024/IMG.jpg', path: nested },
+    { id: 'art:kept', path: art, album: 'Kunst' },
+    { id: 'file:missing.jpg', path: path.join(photos, 'missing.jpg') },
+  ] } };
+  fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify(legacy));
+  const manager = new Manager(seeds, model, { env, root: path.join(data, 'adoption') });
+  const server = createServer(manager.base, [], { manager });
+  manager.server = server;
+  await server.listen();
+  t.after(() => server.close());
+  let release, entered;
+  const blocked = new Promise((r) => { release = r; });
+  const started = new Promise((r) => { entered = r; });
+  const ingest = manager.ingest.bind(manager);
+  manager.ingest = async (...args) => { entered(); await blocked; return ingest(...args); };
+  const adopting = manager.initialize();
+  await Promise.race([started, adopting]);
+  try {
+    assert.equal((await fetch(`${server.baseUrl}/healthz`)).status, 200);
+    for (const route of ['/api/v1/call/testConnection', '/api/action', '/alt'])
+      assert.equal((await fetch(`${server.baseUrl}${route}`, { method: 'POST' })).status, 503);
+  } finally { release(); }
+  await adopting;
+  assert.equal(manager.ready, true);
+  assert.equal(manager.frame('main').current.pictureId, null);
+  assert.deepEqual(manager.s.pictures.map((p) => p.id).sort(), ['art:kept', 'file:2024/IMG.jpg']);
+  assert.equal(manager.s.history.filter((h) => /übersprungen/.test(h.text)).length, 3);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, 'state.json'))), legacy);
+  await manager.initialize();
+  assert.equal(manager.s.pictures.length, 2);
+  assert.equal((await fetch(`${server.baseUrl}/api/v1/bootstrap`)).status, 200);
+});
+
+test('release #2: bounded JPEGs and subscription batches, low-space refusal, and prepared delivery survives ENOSPC', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame, data } = await setup(t, { fake, count: 4 });
+  const file = path.join(data, 'large.jpg');
+  await sharp({ create: { width: 1000, height: 800, channels: 3, background: '#309030' } }).jpeg().toFile(file);
+  const picture = await manager.ingest(file);
+  const meta = await sharp(picture.file).metadata();
+  assert.equal(meta.format, 'jpeg');
+  assert.equal(meta.width, 256);
+  assert.equal(meta.height, picture.height);
+  manager.s.subscriptions.album = { on: true, name: 'Album' };
+  const ids = Array.from({ length: 35 }, (_, i) => ({ id: `asset-${i}` }));
+  manager.immichClient = () => ({ version: async () => '3.4.2', search: async () => ({ items: ids, nextCursor: null }) });
+  const imported = [];
+  manager.importFromImmich = async (batch) => {
+    for (const id of batch) { manager.s.imported[id] = id; imported.push(id); }
+  };
+  await manager.pollSubscriptions();
+  assert.equal(imported.length, 10);
+  await manager.pollSubscriptions();
+  assert.equal(imported.length, 20);
+  assert.equal(new Set(imported).size, 20);
+  const statfs = t.mock.method(fs, 'statfsSync', () => ({ bavail: MIN_FREE - 1, bsize: 1 }));
+  await assert.rejects(manager.ingest(file), /256 MiB/);
+  await assert.rejects(manager.upload({}), /256 MiB/);
+  await assert.rejects(manager.pollSubscriptions(), /256 MiB/);
+  assert.match(manager.s.history[0].text, /256 MiB/);
+  statfs.mock.restore();
+  const server = createServer(manager.base, [...manager.apps.values()], { manager });
+  await server.listen();
+  t.after(() => server.close());
+  manager.server = server;
+  await manager.prepare(frame);
+  const write = fs.writeFileSync;
+  let retried = false;
+  t.mock.method(fs, 'writeFileSync', (...args) => {
+    if (typeof args[0] === 'number' && fs.existsSync(manager.store.reserve)) {
+      retried = true;
+      throw Object.assign(new Error('PVC full'), { code: 'ENOSPC' });
+    }
+    return write(...args);
+  });
+  assert.equal(await manager.deliver(frame), true);
+  assert.equal(retried, true);
+  assert.equal(manager.guarded(frame), true);
+  assert.ok(JSON.parse(fs.readFileSync(manager.store.file)).frames[0].guard);
+  assert.equal(fs.readdirSync(manager.root).some((f) => f.endsWith('.tmp')), false);
+  assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
+});
+
+test('release #3: an import waits for an active render on the shared decoder queue', async (t) => {
+  const { manager, frame, photos, data } = await setup(t, { count: 1 });
+  const p = manager.s.pictures[0];
+  p.crops.hoch.auto = false;
+  let entered, release;
+  const started = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  const crop = manager.cropImage.bind(manager);
+  manager.cropImage = async (...args) => { entered(); await gate; return crop(...args); };
+  const render = manager.renderPicture(p, manager.apps.get(frame.id).cfg, path.join(data, 'render.png'));
+  await started;
+  let imported = false;
+  const ingest = manager.ingest(path.join(photos, 'photo-0.jpg')).then(() => { imported = true; });
+  try {
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(imported, false);
+    assert.equal(manager.s.pictures.length, 1);
+  } finally { release(); }
+  await Promise.all([render, ingest]);
+  assert.equal(imported, true);
+  assert.equal(manager.s.pictures.length, 2);
+});
+
+test('release #4: untrusted Host cannot bootstrap, mutate or read media; IP, SSO and display routes work', async (t) => {
+  const { manager } = await setup(t, { count: 1 });
+  manager.env.UI_HOSTS = 'frame.example, second.example';
+  const server = createServer(manager.base, [...manager.apps.values()], { manager });
+  await server.listen();
+  t.after(() => server.close());
+  const request = (route, host, method = 'GET') => new Promise((resolve, reject) => {
+    const req = http.request(`${server.baseUrl}${route}`, { method, headers: { Host: host, Origin: `http://${host}`, 'X-Forwarded-Host': 'frame.example' } }, (res) => {
+      res.resume(); res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject); req.end();
+  });
+  for (const route of ['/', '/alt', '/api/v1/bootstrap', '/api/v1/call/listPictures', `/api/v1/media/${encodeURIComponent(manager.s.pictures[0].id)}/image`])
+    assert.equal(await request(route, 'rebind.attacker.example'), 403, route);
+  assert.equal(await request('/api/v1/call/frameAction', 'rebind.attacker.example', 'POST'), 403);
+  for (const host of ['127.0.0.1:8321', '[::1]:8321', 'localhost:8321', 'frame.example', 'second.example:443'])
+    assert.equal(await request('/api/v1/bootstrap', host), 200, host);
+  assert.equal(await request('/healthz', 'rebind.attacker.example'), 200);
+  assert.equal(await request('/emdx/00000000-0000-0000-0000-000000000000/content.json', 'rebind.attacker.example'), 404);
+  assert.notEqual(await request('/content-transfer-progress', 'rebind.attacker.example', 'POST'), 403);
+});
 
 test('calendar cadence crosses months, years and DST; live hourly window includes midnight', () => {
   const c = cadenceClock(
@@ -505,7 +647,7 @@ test('real HEVC fixture decodes pixels with the installed libheif converter', as
   );
   assert.equal(image.width, 128);
   assert.equal(image.height, 192);
-  const pixels = await sharp(image.png)
+  const pixels = await sharp(image.image)
     .raw()
     .toBuffer({ resolveWithObject: true });
   assert.ok(pixels.data[0] < 70 && pixels.data[2] > 140);

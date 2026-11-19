@@ -39,7 +39,8 @@ export class Manager {
     this.env = env;
     this.model = model;
     this.apps = new Map();
-    this.ingestion = Promise.resolve();
+    this.workChain = Promise.resolve();
+    this.ready = false;
     this.preparations = new Map();
     this.timers = new Map();
     this.artCache = new Map();
@@ -148,38 +149,41 @@ export class Manager {
         const st = new Store(f.dataDir).state;
         const existing = st.library?.items || [];
         const listed = new Map(existing.map((p) => [p.id, p]));
-        if (f.photoDir && fs.existsSync(f.photoDir)) {
-          for (const filename of fs.readdirSync(f.photoDir))
-            if (/\.(jpe?g|png|webp|heic|heif|avif|tiff?)$/i.test(filename)) {
-              const fileId = `file:${filename}`;
-              listed.set(fileId, {
-                ...listed.get(fileId),
-                id: fileId,
-                path: path.join(f.photoDir, filename),
-                album: 'Folder',
-              });
+        const skipped = (name) => name.split(/[\\/]/).some((part) => /^[.@]/.test(part));
+        const reject = (name, err) => this.record({
+          frameId: f.id, kind: 'problem', ok: false,
+          text: `${name}: bei Übernahme übersprungen. ${err.status ? err.message : 'Datei nicht lesbar oder ungültig.'}`,
+        });
+        const walk = (dir) => {
+          try {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (skipped(entry.name)) continue;
+              const file = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(file);
+              else if (entry.isFile() && /\.(jpe?g|png|webp|heic|heif|avif|tiff?|gif)$/i.test(entry.name)) {
+                const fileId = `file:${path.relative(f.photoDir, file)}`;
+                listed.set(fileId, { album: 'Folder', ...listed.get(fileId), id: fileId, path: file });
+              }
             }
-        }
+          } catch (err) { reject(path.basename(dir), err); }
+        };
+        if (f.photoDir) walk(f.photoDir);
         for (const item of listed.values()) {
           if (this.s.pictures.some((p) => p.id === item.id)) continue;
-          const file = f.photoDir
-            ? path.join(
-                f.photoDir,
-                path.basename(item.path || item.id.slice(5)),
-              )
-            : item.path;
-          if (!file || !fs.existsSync(file))
-            throw new Error(
-              'Migration requires the existing photo folder; no replacement library created',
-            );
-          const p = await this.ingest(file, {
-            assetId: item.id,
-            title: path.basename(file),
-            accepted: true,
-            albums: [item.album || 'Folder'],
-            sourceNote: 'Bestehender Fotoordner',
-          });
-          p.takenAt = item.takenAt || p.takenAt;
+          if (skipped(item.id.replace(/^file:/, '')) || (item.path && skipped(path.basename(item.path)))) continue;
+          const file = item.path || (item.id.startsWith('file:') && f.photoDir
+            ? path.join(f.photoDir, item.id.slice(5)) : null);
+          try {
+            if (!file) throw fail('Dateipfad fehlt');
+            const p = await this.ingest(file, {
+              assetId: item.id,
+              title: path.basename(file),
+              accepted: true,
+              albums: [item.album || 'Folder'],
+              sourceNote: 'Bestehender Fotoordner',
+            });
+            p.takenAt = item.takenAt || p.takenAt;
+          } catch (err) { reject(path.basename(file || item.id), err); }
         }
         const convert = (slot) => {
           if (!slot?.ids?.length) return null;
@@ -189,7 +193,7 @@ export class Manager {
             pictureId = `legacy-${slotDir || slot.ids.join('-')}`;
             if (!this.s.pictures.some((p) => p.id === pictureId)) {
               const member = this.s.pictures.find((p) => p.id === slot.ids[0]);
-              if (member)
+              if (member && slot.ids.every((pid) => this.s.pictures.some((p) => p.id === pid)))
                 this.s.pictures.push({
                   ...structuredClone(member),
                   id: pictureId,
@@ -213,7 +217,8 @@ export class Manager {
             }
           }
           return {
-            pictureId,
+            // Keep the rendered legacy file even if its source could not be adopted.
+            pictureId: this.s.pictures.some((p) => p.id === pictureId) ? pictureId : null,
             at: slot.at || slot.since || Date.now(),
             file: slotDir
               ? path.join(f.dataDir, 'playlist', slotDir, 'device.png')
@@ -282,6 +287,7 @@ export class Manager {
         delete p.applying;
       }
     this.save();
+    this.ready = true;
     return [...this.apps.values()];
   }
 

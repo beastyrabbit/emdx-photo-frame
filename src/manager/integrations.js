@@ -272,6 +272,7 @@ export class Integrations {
       if (typeof assetId !== 'string' || !/^[a-zA-Z0-9-]{1,100}$/.test(assetId))
         throw fail('Ungültige Immich-Bildkennung');
       if (this.s.imported[assetId]) continue;
+      this.requireImportSpace();
       const meta = await client.request(
         `/assets/${encodeURIComponent(assetId)}`,
       );
@@ -325,22 +326,32 @@ export class Integrations {
       const client = this.immichClient();
       await client.version();
       for (const [albumId, sub] of subscribed) {
-        let cursor = null;
+        let cursor = sub.cursor || null;
+        let remaining = 10;
+        let pages = 0;
         const seen = new Set();
         do {
+          this.requireImportSpace();
           const page = await client.search({ albumId }, cursor);
-          await this.importFromImmich(
-            page.items.map((a) => a.id),
-            [sub.name],
-          );
+          const candidates = page.items.filter((a) => !this.s.imported[a.id]);
+          const batch = candidates.slice(0, remaining);
+          await this.importFromImmich(batch.map((a) => a.id), [sub.name]);
+          remaining -= batch.length;
+          // Revisit a partially consumed page; imported IDs make it resumable.
+          if (batch.length < candidates.length) break;
           cursor = page.nextCursor;
           if (cursor && seen.has(cursor))
             throw fail('Immich hat einen Cursor wiederholt', 502);
           seen.add(cursor);
-        } while (cursor);
+        } while (cursor && remaining > 0 && ++pages < 10);
+        sub.cursor = cursor;
         sub.lastSync = Date.now();
         this.save();
       }
+    } catch (err) {
+      this.record({ kind: 'problem', ok: false, text: err.status ? err.message : 'Album-Import fehlgeschlagen.' });
+      this.save();
+      throw err;
     } finally {
       this.polling = false;
     }
@@ -384,6 +395,7 @@ export class Integrations {
       throw fail('Höchstens 50 Werke auswählen');
     for (const workId of workIds) {
       if (this.s.pictures.some((p) => p.ref === workId)) continue;
+      this.requireImportSpace();
       const art =
         this.artCache.get(workId) ||
         (await getArt({ baseUrl: this.base.art.baseUrl, id: workId }));

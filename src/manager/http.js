@@ -133,7 +133,8 @@ export function managerHttp(
           sendFile(
             res,
             manager.mediaPath(decodeURIComponent(media[1]), media[2]),
-            media[2] === 'thumb' ? 'image/jpeg' : 'image/png',
+            media[2] === 'thumb' || /\.jpe?g$/i.test(manager.mediaPath(decodeURIComponent(media[1]), media[2]))
+              ? 'image/jpeg' : 'image/png',
           );
           return true;
         }

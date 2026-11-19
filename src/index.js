@@ -48,9 +48,10 @@ async function main() {
 
   if (cmd === 'serve') {
     const manager = new Manager(frames, model);
-    const apps = await manager.initialize();
-    const server = createServer(cfg, apps, { manager });
+    const server = createServer(cfg, [], { manager });
+    manager.server = server;
     await server.listen();
+    await manager.initialize();
     manager.start(server);
     const stopManaged = async () => { manager.stop(); await server.close(); process.exit(0); };
     process.on('SIGTERM', stopManaged);

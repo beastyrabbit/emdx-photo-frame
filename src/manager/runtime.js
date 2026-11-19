@@ -102,7 +102,7 @@ export class Runtime {
   }
   async prepare(f) {
     if (this.preparations.has(f.id)) return this.preparations.get(f.id);
-    // Bound decoder/render memory across all frames in the 1 GiB container.
+    // Serialize preparation bookkeeping; pixel work shares Media.work with imports.
     const promise = (this.prepareChain || Promise.resolve())
       .then(() => this.prepareLocked(f))
       .finally(() => this.preparations.delete(f.id));
@@ -359,6 +359,10 @@ export class Runtime {
     return schedule;
   }
   async renderCard(f, kind, file) {
+    return this.work(() => this.renderCardLocked(f, kind, file));
+  }
+
+  async renderCardLocked(f, kind, file) {
     const cfg = this.apps.get(f.id).cfg;
     const { width, height } = cfg.panel;
     const lines = [
@@ -438,7 +442,7 @@ export class Runtime {
       kind: 'wechsel',
       text: entry.pictureId
         ? `${this.picture(entry.pictureId).title}: Wechsel laut übertragenem Zeitplan`
-        : `${entry.card}: laut übertragenem Zeitplan`,
+        : `${entry.card || 'Übernommenes Bild'}: laut übertragenem Zeitplan`,
     });
     return true;
   }

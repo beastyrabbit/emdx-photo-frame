@@ -2,6 +2,8 @@
 
 The service serves the new interface at `/` and the upstream page at `/alt`.
 It adopts env-configured frames and existing folder pictures on first start.
+Health checks respond during adoption; frame actions stay blocked until it finishes.
+Unreadable or rejected pictures are skipped and recorded in Verlauf.
 The original state and playlist files stay in place. Manager state, copied
 pictures, prepared programs and encrypted credentials live under
 `DATA_DIR/manager`. Back up the complete volume before upgrading.
@@ -54,6 +56,12 @@ Optional integration settings:
 | `OPENROUTER_API_KEY` | Future generation key slot; no generation feature |
 | `SECRETS_KEY` | 32-byte master key in hex or base64 |
 | `UI_PASSWORD` | Optional existing HTTP Basic authentication |
+| `UI_HOSTS` | Comma-separated UI hostnames, such as `frame.heerlab.com`, including the hostname used by the SSO proxy |
+
+UI, API and media requests accept IP literals, `localhost`, `SERVER_HOST`
+and the names in `UI_HOSTS`. Other Host headers are refused before routing,
+including on `/alt`. Display downloads, transfer callbacks and `/healthz`
+do not use this restriction. Forwarded host headers do not grant access.
 
 Without `SECRETS_KEY`, the service creates a mode-0600 key file in
 `DATA_DIR/manager/key`. Preserve this file with encrypted credentials.
@@ -61,6 +69,12 @@ Integration keys and stored device PINs are never returned by the API.
 Immich needs `album.read`, `asset.read`, `asset.view`, `asset.download` and,
 for the people picker, `person.read`. Imported files are independent copies,
 preferring Immich's edited version. Album subscriptions poll every 15 minutes.
+Each subscription imports at most ten new pictures and reads at most ten pages
+per poll, resuming on the next poll. Working copies are metadata-free JPEGs
+at quality 92, capped at twice the panel's long side. Originals stay untouched.
+Imports pause below 256 MiB free on `/data`, with a message in the interface
+or Verlauf. A 16 MiB disk reserve protects state saves for prepared deliveries;
+free space promptly if imports pause. Imports and renders share one work queue.
 
 The container runs with a read-only root filesystem, writable `/data` and
 `/tmp`, uid 1000 and a 1 GiB memory limit. No new volume or required env var

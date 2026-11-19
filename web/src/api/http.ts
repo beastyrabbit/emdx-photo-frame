@@ -5,8 +5,7 @@ let csrf: Promise<string> | undefined
 async function token() {
   csrf ??= fetch("/api/v1/bootstrap", { credentials: "same-origin" })
     .then(async (response) => {
-      if (!response.ok) throw new Error("Verbindung zum Dienst fehlt")
-      return (await response.json()).csrf as string
+      return (await decode<{ csrf: string }>(response)).csrf
     })
     .catch((error) => {
       csrf = undefined
@@ -14,8 +13,14 @@ async function token() {
     })
   return csrf
 }
+async function responseJson(response: Response) {
+  if (response.type === "opaqueredirect" || response.redirected || !/\bapplication\/(?:[\w.-]+\+)?json\b/i.test(response.headers.get("content-type") || "")) {
+    throw new Error("Anmeldung abgelaufen – Seite neu laden")
+  }
+  return response.json()
+}
 async function decode<T>(response: Response): Promise<T> {
-  const result = await response.json()
+  const result = await responseJson(response)
   if (!response.ok) {
     throw new Error(result.error || "Anfrage fehlgeschlagen")
   }
@@ -29,7 +34,7 @@ async function mutate(url: string, init: RequestInit): Promise<Response> {
       credentials: "same-origin",
       headers: { ...init.headers, "X-CSRF-Token": await token() },
     })
-    if (attempt === 0 && response.status === 403 && (await response.clone().json()).code === "csrf") {
+    if (attempt === 0 && response.status === 403 && (await responseJson(response.clone())).code === "csrf") {
       csrf = undefined
       continue
     }
