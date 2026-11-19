@@ -138,6 +138,11 @@ export async function normalize(file, maxSide = 5120) {
       sha: hash(input),
       pixelHash: hash(data),
     };
+  } catch (err) {
+    // A decoder error (corrupt or truncated file) means the picture can never be taken;
+    // system errors (with a code, such as ENOSPC) stay as they are so the caller retries.
+    if (err.status || err.code) throw err;
+    throw fail('Bild konnte nicht dekodiert werden.', 415);
   } finally {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   }

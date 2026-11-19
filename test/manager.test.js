@@ -1002,10 +1002,11 @@ test('an album subscription skips a picture it cannot take and imports the rest'
     if (req.url === '/api/server/version')
       res.end(JSON.stringify({ major: 3, minor: 4, patch: 2 }));
     else if (req.url.startsWith('/api/search/'))
-      res.end(JSON.stringify({ assets: { items: [{ id: 'huge', type: 'IMAGE' }, { id: 'bad', type: 'IMAGE' }, { id: 'good', type: 'IMAGE' }], nextCursor: null } }));
+      res.end(JSON.stringify({ assets: { items: [{ id: 'huge', type: 'IMAGE' }, { id: 'bad', type: 'IMAGE' }, { id: 'truncated', type: 'IMAGE' }, { id: 'good', type: 'IMAGE' }], nextCursor: null } }));
     else if (req.url.includes('/original')) {
       res.setHeader('Content-Type', 'image/jpeg');
       if (req.url.includes('/huge/')) res.end(Buffer.alloc(26 * 1024 * 1024));
+      else if (req.url.includes('/truncated/')) res.end(image.subarray(0, Math.floor(image.length / 2)));
       else res.end(req.url.includes('/bad/') ? Buffer.from('not a picture') : image);
     } else if (req.url.startsWith('/api/assets/'))
       res.end(JSON.stringify({ type: 'IMAGE', originalFileName: req.url.includes('/bad') ? 'kaputt.jpg' : 'gut.jpg', fileCreatedAt: '2026-01-01T00:00:00Z' }));
@@ -1024,6 +1025,7 @@ test('an album subscription skips a picture it cannot take and imports the rest'
   assert.ok(manager.s.imported.good);
   assert.ok(manager.s.importSkipped.bad);
   assert.ok(manager.s.importSkipped.huge);
+  assert.ok(manager.s.importSkipped.truncated);
   await manager.pollSubscriptions();
   assert.equal(manager.listInbox().filter((p) => p.source === 'immich').length, 1);
 });
