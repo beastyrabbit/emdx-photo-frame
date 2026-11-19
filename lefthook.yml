@@ -1,0 +1,17 @@
+# Install once per clone: lefthook install (needs lefthook and gitleaks on PATH).
+pre-commit:
+  parallel: true
+  commands:
+    gitleaks:
+      run: gitleaks git --staged --no-banner --redact
+      skip:
+        - merge
+    # Upstream has no linter; a syntax check keeps broken JS out without reformatting its files.
+    node-check:
+      glob: "*.js"
+      run: for f in {staged_files}; do node --check "$f" || exit 1; done
+
+pre-push:
+  commands:
+    gitleaks:
+      run: gitleaks git --no-banner --redact
