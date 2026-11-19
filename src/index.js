@@ -24,6 +24,7 @@ import { createServer } from './server.js';
 import { fetchAlbum } from './sources/googleAlbum.js';
 import { readDisplayInfo, putToSleep, confirmAsleep, probeDisplay, sendWakeOnLan } from './display.js';
 import { composeCanvas, renderCanvas } from './render.js';
+import { Manager } from './manager/index.js';
 
 process.on('unhandledRejection', (err) => log.error('Unhandled error:', err));
 
@@ -44,6 +45,21 @@ async function main() {
   if (!frame) throw new Error(`--frame: no frame called "${which}" (FRAMES has ${frames.map((f) => f.id).join(', ')})`);
   const cfg = frame.cfg;
   const model = buildPaletteModel(cfg.image.measuredPalette, DEVICE_PALETTE);
+
+  if (cmd === 'serve') {
+    const manager = new Manager(frames, model);
+    const apps = await manager.initialize();
+    const server = createServer(cfg, apps, { manager });
+    await server.listen();
+    manager.start(server);
+    const stopManaged = async () => { manager.stop(); await server.close(); process.exit(0); };
+    process.on('SIGTERM', stopManaged);
+    process.on('SIGINT', stopManaged);
+    return;
+  }
+  if (!['render', 'check-album'].includes(cmd) && fs.existsSync(path.join(process.env.DATA_DIR || cfg.dataDir, 'manager', 'state.json'))) {
+    throw new Error('Managed service: use its web interface so ownership and wake ordering are preserved.');
+  }
 
   if (cmd === 'check-album') {
     if (!cfg.albumUrls.length) throw new Error('Set ALBUM_URLS first');

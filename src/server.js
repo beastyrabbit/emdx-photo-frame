@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { log, stamp } from './log.js';
 import { UI_HTML } from './ui.js';
+import { managerHttp } from './manager/http.js';
 
 const MAX_PUSHES = 6;
 const EPD_CONTENT_DIR = '/home/owner/content/Downloads/vxtplayer/epaper/mobile/contents';
@@ -13,13 +14,14 @@ const MAX_POST_BYTES = 1024 * 1024; // what the display may POST to us (download
 
 // `cfg`: the settings (its `server` part is shared by all frames). `frames`: one app, or a list
 // of them.
-export function createServer(cfg, frames) {
+export function createServer(cfg, frames, { manager = null } = {}) {
   const list = [frames].flat();
   const idOf = (a) => a.cfg?.frame?.id ?? 'main';
   const apps = new Map(list.map((a) => [idOf(a), a]));
   const hostOf = (a) => (a.cfg ?? cfg).display?.host || '';
-  const several = apps.size > 1;
+  let several = apps.size > 1;
   const pushes = new Map();
+  const managed = manager ? managerHttp(manager) : null;
   // The last requests from the display (and to the endpoints it uses), in /api/status.
   const traffic = [];
   const baseUrl = `http://${cfg.server.publicHost}:${cfg.server.port}`;
@@ -71,7 +73,7 @@ export function createServer(cfg, frames) {
     }).replaceAll('/', '\\/');
     const entry = { id, files, json, waiters: new Set() };
     pushes.set(id, entry);
-    while (pushes.size > MAX_PUSHES) pushes.delete(pushes.keys().next().value);
+    while (!manager && pushes.size > MAX_PUSHES) pushes.delete(pushes.keys().next().value);
     const fetchedCount = () => files.filter((f) => f.fetched).length;
     return {
       id,
@@ -205,7 +207,7 @@ export function createServer(cfg, frames) {
     return { note, fromDisplay };
   }
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     const { note, fromDisplay } = noteRequest(req, res, p);
@@ -253,7 +255,8 @@ export function createServer(cfg, frames) {
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="EMDX photo frame"' }).end('Authentication required');
       return;
     }
-    if (p === '/' && req.method === 'GET') {
+    if (managed && await managed(req, res, url)) return;
+    if ((p === '/alt' || p === '/' && !manager) && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(UI_HTML);
       return;
@@ -291,6 +294,7 @@ export function createServer(cfg, frames) {
     }
     // Only accept button presses from this page (no cross-site requests).
     const sameHost = () => {
+      if (req.headers['sec-fetch-site'] === 'cross-site') return false;
       const origin = req.headers.origin;
       try { return !origin || new URL(origin).host === req.headers.host; } catch { return false; }
     };
@@ -351,10 +355,17 @@ export function createServer(cfg, frames) {
   });
 
   return {
+    addApp(app) {
+      list.push(app);
+      apps.set(idOf(app), app);
+      several = apps.size > 1;
+      if (hostOf(app)) { displayHosts.add(hostOf(app)); if (net.isIP(hostOf(app))) displayIps.add(hostOf(app)); }
+    },
     baseUrl,
     registerContent,
     registerPush,
     restoreContent,
+    releaseContent(id) { if (id) pushes.delete(id); },
     // The last requests (with `host`: those from that display's address).
     recentTraffic: (host) => traffic.filter((t) => !host || !several || t.ip === host).map(({ ip, ...t }) => t),
     listen() {
