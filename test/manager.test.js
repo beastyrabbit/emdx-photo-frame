@@ -314,6 +314,47 @@ for (const change of ['deleted', 'paused', 'reserved elsewhere']) {
 }
 
 for (const change of ['deleted', 'paused']) {
+  for (const count of [8, 2]) {
+    test(`L1: scheduled tick replaces a ${change} current picture with ${count - 1} usable alternative${count === 2 ? '' : 's'}`, async (t) => {
+      const fake = await startFakeEmdx();
+      t.after(() => fake.close());
+      const initialNow = stamp('2026-11-19T12:30:00Z');
+      let now = initialNow;
+      t.mock.method(Date, 'now', () => now);
+      const { manager, frame } = await setup(t, { fake, count });
+      await serving(t, manager);
+      await manager.prepare(frame);
+      assert.equal(await manager.deliver(frame), true);
+      const delivered = frame.delivered;
+      const pid = delivered.entries[1].pictureId;
+      const replacement = delivered.entries.find((e) => e.at > delivered.entries[1].at && e.pictureId !== pid)
+        || delivered.entries[0];
+      assert.notEqual(pid, delivered.entries[0].pictureId);
+      frame.lastDue = manager.clock(frame).prev(initialNow);
+      if (change === 'deleted') manager.deletePicture(pid);
+      else manager.updatePicture(pid, { paused: true });
+      // Rebuild while asleep, before the rejected buffered picture becomes current.
+      await manager.prepare(frame);
+      assert.equal(frame.prepared.entries[0].pictureId, delivered.entries[0].pictureId);
+      const before = fake.events.length;
+      now = delivered.entries[1].at + 1;
+      assert.equal(fake.showing().index, 1);
+      await manager.tick(frame);
+      assert.notEqual(frame.delivered.id, delivered.id);
+      assert.equal(frame.delivered.state, 'downloaded');
+      assert.equal(frame.current.pictureId, replacement.pictureId);
+      assert.ok(frame.delivered.entries.every((e) => e.pictureId !== pid));
+      assert.equal(fake.received.length, 2);
+      assert.deepEqual(fake.received[1].image, fs.readFileSync(frame.delivered.entries[0].file));
+      const commands = fake.events.slice(before).filter((e) => e.startsWith('cmd:'));
+      assert.equal(commands.filter((e) => e === 'cmd:c7').length, 1);
+      assert.equal(commands.at(-1), 'cmd:c7');
+      assert.equal(manager.guarded(frame), true);
+      frame.lastProbe = null;
+      await manager.tick(frame);
+      assert.deepEqual(fake.events.slice(before).filter((e) => e.startsWith('cmd:')), commands);
+    });
+  }
   test(`K1: delivery rechecks a picture ${change} during settings before sending content`, async (t) => {
     const fake = await startFakeEmdx();
     t.after(() => fake.close());

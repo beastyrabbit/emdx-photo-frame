@@ -167,8 +167,18 @@ export class Runtime {
         )
           chosen = { pictureId: pid, force: event.sameOnAll };
       }
-      if (!chosen && i === 0 && f.current?.pictureId)
-        chosen = { pictureId: f.current.pictureId, preserve: true, force: f.current.force };
+      if (!chosen && i === 0 && f.current?.pictureId) {
+        // A buffered picture can become current after it was deleted or paused.
+        // Prefer the next usable buffered card, then an earlier one if the pool is short.
+        const buffered = [...(f.plan || []), ...(f.delivered?.entries || [])];
+        const current = [f.current, ...buffered.filter((e) => e.at > now), ...buffered].find((entry) => {
+          const picture = this.s.pictures.find((p) => p.id === entry.pictureId);
+          return picture?.status === 'accepted' && !picture.paused &&
+            (entry.force || !this.owners(entry.pictureId).some((owner) => owner !== f.id));
+        });
+        if (current)
+          chosen = { pictureId: current.pictureId, preserve: true, force: current.force };
+      }
       if (!chosen && !event) {
         // Downloaded manual slots remain in order until their actual display time.
         const old = (f.delivered?.entries || []).find(
