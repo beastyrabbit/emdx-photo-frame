@@ -258,7 +258,9 @@ export class Integrations {
       nextCursor: page.nextCursor,
     };
   }
-  async importFromImmich(assetIds, albums = []) {
+  // `skipRejected`: an album subscription records and skips a picture the service cannot
+  // take (too large, undecodable) instead of retrying it on every poll.
+  async importFromImmich(assetIds, albums = [], { skipRejected = false } = {}) {
     if (!Array.isArray(assetIds) || assetIds.length > 100)
       throw fail('Höchstens 100 Bilder auswählen');
     if (
@@ -277,22 +279,33 @@ export class Integrations {
         `/assets/${encodeURIComponent(assetId)}`,
       );
       if (meta.type !== 'IMAGE' || meta.isTrashed || meta.isOffline) continue;
-      const { bytes } = await client.request(
-        `/assets/${encodeURIComponent(assetId)}/original?edited=true`,
-        null,
-        true,
-      );
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-import-'));
       try {
-        const file = path.join(dir, 'image');
-        fs.writeFileSync(file, bytes, { mode: 0o600 });
-        const p = await this.ingest(file, {
-          title: meta.originalFileName || 'Immich-Bild',
-          source: 'immich',
-          sourceNote: albums.length ? `Immich: ${albums.join(', ')}` : 'Immich',
-          albums,
-          ref: assetId,
-        });
+        let p;
+        try {
+          const { bytes } = await client.request(
+            `/assets/${encodeURIComponent(assetId)}/original?edited=true`,
+            null,
+            true,
+          );
+          const file = path.join(dir, 'image');
+          fs.writeFileSync(file, bytes, { mode: 0o600 });
+          p = await this.ingest(file, {
+            title: meta.originalFileName || 'Immich-Bild',
+            source: 'immich',
+            sourceNote: albums.length ? `Immich: ${albums.join(', ')}` : 'Immich',
+            albums,
+            ref: assetId,
+          });
+        } catch (err) {
+          // Only a picture that can never be taken is skipped; network and disk errors retry.
+          if (!skipRejected || ![413, 415].includes(err.status)) throw err;
+          this.s.importSkipped = this.s.importSkipped || {};
+          this.s.importSkipped[assetId] = Date.now();
+          this.record({ kind: 'problem', ok: false, text: `„${meta.originalFileName || 'Immich-Bild'}“ übersprungen: ${err.message}` });
+          this.save();
+          continue;
+        }
         p.takenAt = Date.parse(meta.fileCreatedAt) || p.takenAt;
         this.s.imported[assetId] = p.id;
         this.save();
@@ -333,9 +346,9 @@ export class Integrations {
         do {
           this.requireImportSpace();
           const page = await client.search({ albumId }, cursor);
-          const candidates = page.items.filter((a) => !this.s.imported[a.id]);
+          const candidates = page.items.filter((a) => !this.s.imported[a.id] && !this.s.importSkipped?.[a.id]);
           const batch = candidates.slice(0, remaining);
-          await this.importFromImmich(batch.map((a) => a.id), [sub.name]);
+          await this.importFromImmich(batch.map((a) => a.id), [sub.name], { skipRejected: true });
           remaining -= batch.length;
           // Revisit a partially consumed page; imported IDs make it resumable.
           if (batch.length < candidates.length) break;
