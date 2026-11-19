@@ -1,0 +1,82 @@
+/*
+ * Sechs Tinten: every design token of the interface lives in this file.
+ * Change a value here and it changes everywhere.
+ *
+ * The page is unlit e-paper. Colour appears only where it means something:
+ *   blue   = an action, or something waiting for the frame
+ *   green  = confirmed by the frame, fine
+ *   yellow = look at this soon
+ *   red    = needs you now
+ * One colour, one meaning. Yellow is never used for text (use --yellow-ink).
+ */
+
+:root {
+  /* paper and ink */
+  --paper: #eceee9; /* page: the grey-white of an unlit e-paper panel */
+  --surface: #f9faf7; /* sheets, inputs, the pending-changes block */
+  --sunken: #dfe3dc; /* tracks, wells, skeletons */
+  --ink: #191b1a;
+  --ink-soft: #565d58;
+  --line: #cbd0c8;
+  --bezel: #232524; /* the drawn frame around a picture */
+  --mat: #f2f2ee; /* the white of the panel itself */
+
+  /* the four Spectra colours */
+  --blue: #1d4e9e;
+  --blue-wash: #dce6f5;
+  --on-blue: #ffffff;
+  --green: #25724a;
+  --green-wash: #dcebe0;
+  --yellow: #e2b100;
+  --yellow-wash: #f7ebb8;
+  --yellow-ink: #6a5100;
+  --red: #b3271f;
+  --red-wash: #f6ddd9;
+
+  /* type */
+  --font-text: "Nunito Sans Variable", "Avenir Next", Avenir, system-ui, "Segoe UI", sans-serif;
+  --font-number: "Barlow Condensed", "Avenir Next Condensed", "DIN Alternate", "Arial Narrow", var(--font-text);
+  --size-small: 13px;
+  --size-body: 16px;
+  --size-lead: 18px;
+  --size-title: 22px;
+  --size-head: 28px;
+  --size-figure: 40px;
+
+  /* space: Tailwind's spacing scale is built on this step (p-4 = 4 × step) */
+  --space-step: 4px;
+
+  /* shape */
+  --r-control: 10px; /* buttons, inputs, banners */
+  --r-sheet: 18px; /* sheets and dialogs */
+  --r-picture: 2px; /* pictures and frames stay nearly square: they are objects */
+  --tap: 44px; /* smallest touch target */
+
+  --shadow-frame: 0 1px 0 rgb(0 0 0 / 0.25), 0 8px 14px -9px rgb(0 0 0 / 0.5);
+  --hatch: rgb(242 242 238 / 0.72); /* stripes over a picture the server is not sure about */
+}
+
+.dark {
+  --paper: #131514;
+  --surface: #1d201e;
+  --sunken: #282c29;
+  --ink: #e6e9e3;
+  --ink-soft: #a3aaa4;
+  --line: #373c38;
+  --bezel: #050605;
+  --mat: #e9e9e4;
+
+  --blue: #8fb3f3;
+  --blue-wash: #1b2942;
+  --on-blue: #0d1930;
+  --green: #7cc79a;
+  --green-wash: #172e1f;
+  --yellow: #edc53b;
+  --yellow-wash: #3a3110;
+  --yellow-ink: #edc53b;
+  --red: #f0897c;
+  --red-wash: #40201c;
+
+  --shadow-frame: 0 0 0 1px #3a3f3b, 0 8px 14px -9px #000;
+  --hatch: rgb(19 21 20 / 0.6);
+}
