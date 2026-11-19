@@ -90,12 +90,15 @@ export class ManagerStore {
   }
   save() {
     this.state.revision++;
+    this.withReserve(() => atomicJson(this.file, this.state));
+  }
+  withReserve(save) {
     try {
-      atomicJson(this.file, this.state);
+      save();
     } catch (err) {
       if (err.code !== 'ENOSPC' || !fs.existsSync(this.reserve)) throw err;
       fs.unlinkSync(this.reserve);
-      atomicJson(this.file, this.state);
+      save();
     }
   }
 }

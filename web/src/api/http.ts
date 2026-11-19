@@ -3,7 +3,7 @@ import type { ImmichAsset } from "./types"
 
 let csrf: Promise<string> | undefined
 async function token() {
-  csrf ??= fetch("/api/v1/bootstrap", { credentials: "same-origin" })
+  csrf ??= fetch("/api/v1/bootstrap", { credentials: "same-origin", redirect: "manual" })
     .then(async (response) => {
       return (await decode<{ csrf: string }>(response)).csrf
     })
@@ -32,6 +32,7 @@ async function mutate(url: string, init: RequestInit): Promise<Response> {
       ...init,
       method: "POST",
       credentials: "same-origin",
+      redirect: "manual",
       headers: { ...init.headers, "X-CSRF-Token": await token() },
     })
     if (attempt === 0 && response.status === 403 && (await responseJson(response.clone())).code === "csrf") {
@@ -47,7 +48,7 @@ async function call<T>(name: string, args: unknown[], write = false): Promise<T>
     headers["Content-Type"] = "application/json"
   }
   const url = `/api/v1/call/${name}${write ? "" : `?args=${encodeURIComponent(JSON.stringify(args))}`}`
-  return decode<T>(await (write ? mutate(url, { headers, body: JSON.stringify(args) }) : fetch(url, { credentials: "same-origin" })))
+  return decode<T>(await (write ? mutate(url, { headers, body: JSON.stringify(args) }) : fetch(url, { credentials: "same-origin", redirect: "manual" })))
 }
 
 export const httpApi: PhotoFrameApi = {

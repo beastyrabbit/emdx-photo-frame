@@ -147,6 +147,72 @@ test('release #1: adoption preserves real paths, skips bad/hidden files, serves 
   assert.equal((await fetch(`${server.baseUrl}/api/v1/bootstrap`)).status, 200);
 });
 
+test('H2: nested adoption keeps colliding asset names distinct and existing working copies readable', async (t) => {
+  const { manager, photos } = await setup(t, { count: 1 });
+  const existing = manager.s.pictures[0];
+  const oldDir = path.join(manager.root, 'media', existing.id.replace(/[^\w-]/g, '_'));
+  fs.mkdirSync(oldDir, { recursive: true });
+  for (const key of ['file', 'thumb']) {
+    const destination = path.join(oldDir, path.basename(existing[key]));
+    if (destination !== existing[key]) fs.renameSync(existing[key], destination);
+    existing[key] = destination;
+  }
+  const original = fs.readFileSync(existing.file);
+  for (const [name, background] of [['2024/IMG.jpg', '#ff0000'], ['2024_IMG.jpg', '#0000ff']]) {
+    const file = path.join(photos, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    await sharp({ create: { width: 72, height: 128, channels: 3, background } }).jpeg().toFile(file);
+  }
+  manager.s.migrated = false;
+  await manager.initialize();
+  const nested = manager.picture('file:2024/IMG.jpg');
+  const flat = manager.picture('file:2024_IMG.jpg');
+  assert.notEqual(nested.file, flat.file);
+  assert.notEqual(nested.thumb, flat.thumb);
+  for (const key of ['file', 'thumb']) {
+    const red = await sharp(nested[key]).stats();
+    const blue = await sharp(flat[key]).stats();
+    assert.ok(red.channels[0].mean > 240 && red.channels[2].mean < 10);
+    assert.ok(blue.channels[2].mean > 240 && blue.channels[0].mean < 10);
+  }
+  const reloaded = new ManagerStore(manager.root).state;
+  assert.equal(reloaded.pictures.find((p) => p.id === existing.id).file, existing.file);
+  assert.deepEqual(fs.readFileSync(existing.file), original);
+});
+
+test('H1: tick releases the shared reserve for legacy state before delivering prepared content', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake, count: 4 });
+  const server = createServer(manager.base, [...manager.apps.values()], { manager });
+  await server.listen();
+  t.after(() => server.close());
+  manager.server = server;
+  manager.quiet = () => false;
+  await manager.prepare(frame);
+  // Exercise the scheduled-change save as well as the save after a successful probe.
+  frame.lastDue = 0;
+  const write = fs.writeSync;
+  let failures = 0;
+  t.mock.method(fs, 'writeSync', (...args) => {
+    if (fs.existsSync(manager.store.reserve)) {
+      failures++;
+      throw Object.assign(new Error('PVC full'), { code: 'ENOSPC' });
+    }
+    return write(...args);
+  });
+  await manager.tick(frame);
+  assert.equal(failures, 1);
+  assert.equal(fs.existsSync(manager.store.reserve), false);
+  const legacy = JSON.parse(fs.readFileSync(manager.apps.get(frame.id).store.file));
+  assert.equal(legacy.current.pushed, true);
+  assert.ok(legacy.playlist.changes.some((change) => change.online));
+  assert.equal(frame.delivered.state, 'downloaded');
+  assert.equal(manager.guarded(frame), true);
+  assert.ok(JSON.parse(fs.readFileSync(manager.store.file)).frames[0].guard);
+  assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
+});
+
 test('release #2: bounded JPEGs and subscription batches, low-space refusal, and prepared delivery survives ENOSPC', async (t) => {
   const fake = await startFakeEmdx();
   t.after(() => fake.close());

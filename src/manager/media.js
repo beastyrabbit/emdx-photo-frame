@@ -179,7 +179,7 @@ export class Media {
       const dir = path.join(
         this.root,
         'media',
-        pictureId.replace(/[^\w-]/g, '_'),
+        hash(pictureId),
       );
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(dir, 'image.jpg'), n.image, { mode: 0o600 });

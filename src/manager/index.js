@@ -323,7 +323,11 @@ export class Manager {
       connectAttempts: 1,
     };
     cfg.update.mode = 'playlist';
-    const app = new FrameApp(cfg, new Store(f.dataDir), this.model);
+    const store = new Store(f.dataDir);
+    const save = store.save.bind(store);
+    // Legacy bookkeeping must share the reserve used for durable wake guards.
+    store.save = () => this.store.withReserve(save);
+    const app = new FrameApp(cfg, store, this.model);
     this.apps.set(f.id, app);
     this.configure(f);
     cfg.transportGuard = {
