@@ -613,7 +613,15 @@ export class Runtime {
           changeId: null,
           tail: true,
         });
+      // A failed rebuild can leave prepared files for pictures that are no longer allowed.
+      const eligible = () => entries.every((entry) => {
+        if (!entry.pictureId) return true;
+        const picture = this.s.pictures.find((p) => p.id === entry.pictureId);
+        return picture?.status === 'accepted' && !picture.paused &&
+          (entry.force || !this.owners(entry.pictureId).some((owner) => owner !== f.id));
+      });
       if (
+        !eligible() ||
         prepared.cutoff.some(
           (pid) => this.s.pending.find((p) => p.id === pid)?.withdrawn,
         )
@@ -686,6 +694,7 @@ export class Runtime {
             },
             beforeSend: async (device, battery) => {
               await this.applySettings(f, selected, device, battery);
+              if (!eligible()) throw fail('Bilder sind nicht mehr zur Übertragung freigegeben.', 409);
               for (const entry of entries)
                 if (entry.pictureId) this.reserve(entry.pictureId, f.id, entry.force);
               commanded = true;

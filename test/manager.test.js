@@ -267,6 +267,74 @@ test('H1: tick delivers the existing prepared program when rebuilding runs out o
   assert.equal(frame.dirty, false);
 });
 
+for (const change of ['deleted', 'paused', 'reserved elsewhere']) {
+  test(`K1: tick refuses an ENOSPC fallback containing a picture ${change} after preparation`, async (t) => {
+    const fake = await startFakeEmdx();
+    t.after(() => fake.close());
+    const { manager, frame } = await setup(t, { fake, count: 8 });
+    await serving(t, manager);
+    manager.quiet = () => false;
+    await manager.prepare(frame);
+    assert.equal(await manager.deliver(frame), true);
+    frame.guard = null;
+    await manager.prepare(frame);
+    const prepared = frame.prepared;
+    const pid = prepared.entries[1].pictureId;
+    assert.ok(prepared.entries[1].at > Date.now());
+    frame.lastDue = 0;
+    if (change === 'deleted') manager.deletePicture(pid);
+    else if (change === 'paused') manager.updatePicture(pid, { paused: true });
+    else {
+      manager.reserve(pid, 'another-frame', true);
+      manager.requestPrepare(frame);
+    }
+    const delivered = frame.delivered;
+    const playing = fake.state.playing;
+    const commands = fake.events.filter((e) => e.startsWith('cmd:'));
+    const render = t.mock.method(manager, 'renderPicture', async () => {
+      throw Object.assign(new Error('Render failed: PVC full'), { code: 'ENOSPC' });
+    });
+    await manager.tick(frame);
+    assert.equal(render.mock.callCount(), 1);
+    assert.equal(frame.prepared, prepared);
+    assert.equal(frame.delivered, delivered);
+    assert.equal(fake.state.playing, playing);
+    assert.equal(fake.received.length, 1);
+    assert.deepEqual(fake.events.filter((e) => e.startsWith('cmd:')), commands);
+    assert.equal(frame.guard, null);
+    assert.equal(frame.dirty, true);
+    assert.equal(frame.preparing, null);
+    assert.ok(frame.prepareError);
+    const persisted = JSON.parse(fs.readFileSync(manager.store.file)).frames[0];
+    assert.equal(persisted.prepareError, frame.prepareError);
+    assert.equal(persisted.delivered.id, delivered.id);
+    assert.equal(manager.getFrame(frame.id).health.level, 'warn');
+    assert.match(manager.getFrame(frame.id).health.text, /vorbereitet/);
+  });
+}
+
+for (const change of ['deleted', 'paused']) {
+  test(`K1: delivery rechecks a picture ${change} during settings before sending content`, async (t) => {
+    const fake = await startFakeEmdx();
+    t.after(() => fake.close());
+    const { manager, frame } = await setup(t, { fake, count: 4 });
+    await serving(t, manager);
+    await manager.prepare(frame);
+    const pid = frame.prepared.entries[1].pictureId;
+    const app = manager.apps.get(frame.id);
+    const note = app.noteCleaning.bind(app);
+    app.noteCleaning = (...args) => {
+      note(...args);
+      if (change === 'deleted') manager.deletePicture(pid);
+      else manager.updatePicture(pid, { paused: true });
+    };
+    assert.equal(await manager.deliver(frame), false);
+    assert.equal(fake.received.length, 0);
+    assert.ok(!fake.events.includes('cmd:c7'));
+    assert.equal(manager.guarded(frame), false);
+  });
+}
+
 test('release #2: bounded JPEGs and subscription batches, low-space refusal, and prepared delivery survives ENOSPC', async (t) => {
   const fake = await startFakeEmdx();
   t.after(() => fake.close());
