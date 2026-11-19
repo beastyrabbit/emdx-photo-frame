@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { fail } from './store.js';
+import { unsent } from './pending.js';
 
 const RECENT_MS = 24 * 3600000;
 export const fits = (p, orientation) =>
@@ -46,6 +47,10 @@ export class Decks {
   }
   releaseUnused(frame, held) {
     // Only called after a complete successor download, never on timeout, expiry or a dead frame.
+    held = [...held, ...this.s.pending
+      .filter((p) => p.frameId === frame.id && !p.withdrawn &&
+        (unsent(p) || p.applying) && p.payload.pictureIds)
+      .flatMap((p) => p.payload.remaining || p.payload.pictureIds)];
     const identities = new Set(held.flatMap((pid) => this.identities(pid)));
     for (const [identity, owners] of Object.entries(this.s.claims)) {
       if (!identities.has(identity)) delete owners[frame.id];
@@ -94,7 +99,7 @@ export class Decks {
         deck.dealt = deck.dealt.filter((pid) => ids.includes(pid));
       }
   }
-  draw(frame, excluded = []) {
+  draw(frame, excluded = [], reorder = false) {
     const g = this.group(frame.groupId);
     const deck = this.s.decks[`${g.id}:${frame.orientation}`];
     if (!deck) return null;
@@ -104,11 +109,12 @@ export class Decks {
           this.identities(pid).includes(identity),
         ),
       ) &&
-      !this.owners(pid).length &&
+      !this.owners(pid).some((owner) => !reorder || owner !== frame.id) &&
       (!this.picture(pid).lastShown ||
         this.picture(pid).lastShown.frameId === frame.id ||
         Date.now() - this.picture(pid).lastShown.at >= RECENT_MS);
-    let available = deck.order.filter((pid) => !deck.dealt.includes(pid));
+    let available = deck.order.filter((pid) => !deck.dealt.includes(pid) ||
+      (reorder && this.owners(pid).includes(frame.id) && !deck.shown.includes(pid)));
     if (!available.length && deck.order.length) {
       deck.round++;
       deck.shown = [];
@@ -129,7 +135,7 @@ export class Decks {
     deck.draws++;
     // Reservations are not 'shown'. Keep a separate dealt set in the round.
     deck.order = [...deck.order.filter((p) => p !== pid), pid];
-    deck.dealt.push(pid);
+    if (!deck.dealt.includes(pid)) deck.dealt.push(pid);
     return pid;
   }
   noteShown(pid, frameId, at) {
@@ -241,7 +247,10 @@ export class Decks {
       (f) =>
         !f.removed && f.groupId === groupId && f.orientation === orientation,
     ))
-      this.queue(f, 'reihenfolge', 'Reihenfolge im Stapel geändert', { order });
+      this.queue(f, 'reihenfolge', 'Reihenfolge im Stapel geändert', {
+        deck: true,
+        reorderAt: this.timeline(f).find((e) => !e.locked)?.at,
+      });
     this.save();
   }
   timeline(f) {
@@ -309,7 +318,10 @@ export class Decks {
       0,
       pictureId,
     );
-    this.queue(f, 'reihenfolge', 'Reihenfolge am Rahmen geändert', { order });
+    this.queue(f, 'reihenfolge', 'Reihenfolge am Rahmen geändert', {
+      order,
+      reorderAt: timeline.find((e) => !e.locked)?.at,
+    });
     this.save();
   }
 }

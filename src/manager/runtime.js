@@ -119,6 +119,7 @@ export class Runtime {
         'Kunstkatalog nicht erreichbar; vorhandene Bilder laufen weiter.';
     }
     const now = Date.now();
+    this.advanceFrame(f, now);
     const cutoff = this.s.pending
       .filter((p) => p.frameId === f.id && !p.withdrawn && unsent(p))
       .map((p) => p.id);
@@ -130,12 +131,184 @@ export class Runtime {
     const programId = id();
     const dir = path.join(this.root, 'programs', programId);
     fs.mkdirSync(dir, { recursive: true });
+    const events = this.eventsFor(f.id).filter((e) => e.end > now);
+    const schedule = this.programSchedule(f, events, now);
+    const reorderChange = pending
+      .filter((p) => p.kind === 'reihenfolge' && (p.payload.order || p.payload.deck))
+      .at(-1);
+    const reorder = [...(reorderChange?.payload.order || [])];
+    const reorderAt = Math.max(
+      reorderChange?.payload.reorderAt || clock.next(now),
+      clock.next(now),
+    );
+    const actions = pending.filter((p) =>
+      ['erkennungsbild', 'testbild'].includes(p.kind),
+    );
+    const taken = pending
+      .filter((p) => ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind))
+      .flatMap((p) => p.payload.remaining || p.payload.pictureIds);
+    const entries = [];
+    f.shortage = 0;
+    for (let i = 0; i < schedule.length; i++) {
+      const at = schedule[i];
+      const event = events.find((e) => at >= e.start && at < e.end);
+      let chosen = null;
+      if (!event && at >= reorderAt && reorder.length)
+        chosen = { pictureId: reorder.shift() };
+      if (!chosen && event) {
+        const pictures = this.eventAssignments(event)[f.id] || [];
+        const n = Math.floor(
+          (Math.max(at, event.start) - event.start) / (event.everyMin * 60000),
+        );
+        const pid = pictures[n % pictures.length];
+        if (
+          pid &&
+          (event.sameOnAll || !this.owners(pid).some((owner) => owner !== f.id))
+        )
+          chosen = { pictureId: pid, force: event.sameOnAll };
+      }
+      if (!chosen && i === 0 && f.current?.pictureId)
+        chosen = { pictureId: f.current.pictureId, preserve: true, force: f.current.force };
+      if (!chosen && !event) {
+        // Downloaded manual slots remain in order until their actual display time.
+        const old = (f.delivered?.entries || []).find(
+          (e) => e.at === at && e.at > now && e.changeId && !e.tail,
+        );
+        if (old) chosen = old;
+      }
+      if (!chosen && !(reorderChange?.payload.deck && at >= reorderAt)) {
+        const old = (f.plan || []).find((e) => e.at === at && !e.changeId);
+        if (
+          old &&
+          this.s.pictures.some(
+            (p) =>
+              p.id === old.pictureId && p.status === 'accepted' && !p.paused,
+          ) &&
+          !taken.includes(old.pictureId) &&
+          !this.owners(old.pictureId).some((owner) => owner !== f.id)
+        )
+          chosen = old;
+      }
+      if (!chosen) {
+        const pid = this.draw(f, taken, !!reorderChange?.payload.deck && at >= reorderAt);
+        if (pid) chosen = { pictureId: pid };
+      }
+      if (!chosen && !entries.length) {
+        const pid = pending.find((p) =>
+          ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
+        )?.payload.pictureIds[0];
+        if (pid) chosen = { pictureId: pid, preserve: true };
+      }
+      if (!chosen && entries.length) {
+        f.shortage++;
+        const fallback = event
+          ? entries.at(-1)
+          : entries.findLast((e) => !e.eventId && e.pictureId);
+        chosen = {
+          pictureId:
+            fallback?.pictureId ||
+            f.current?.pictureId ||
+            entries.at(-1).pictureId,
+          preserve: true,
+        };
+      }
+      if (!chosen && actions.length) chosen = { pictureId: null };
+      if (!chosen) continue;
+      if (chosen.pictureId) {
+        this.reserve(chosen.pictureId, f.id, chosen.force || chosen.preserve);
+        taken.push(chosen.pictureId);
+      }
+      entries.push({
+        pictureId: chosen.pictureId,
+        at,
+        eventId: event?.id || null,
+        changeId: chosen.changeId || null,
+        force: !!chosen.force,
+        pinned: !!chosen.changeId,
+        file: path.join(dir, `${entries.length}.png`),
+      });
+    }
+    if (!entries.length) {
+      f.prepareError =
+        'Noch keine passenden Bilder. Der Rahmen behält sein Bild.';
+      f.prepared = { id: programId, entries, manual: [], cutoff, cadence, preparedAt: now };
+      f.dirty = false;
+      this.save();
+      return;
+    }
+    // Claims and preparation identity are durable before expensive renders yield control.
+    f.preparing = { id: programId, entries, cutoff };
+    this.save();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const action = i === 0 || !entry.pictureId ? actions.at(-1) : null;
+      if (action) {
+        entry.pictureId = null;
+        entry.card = action.kind;
+        await this.renderCard(f, action.kind, entry.file);
+      } else if (entry.pictureId) {
+        entry.renderKey = this.renderKey(entry.pictureId, renderCfg);
+        const cached = (f.delivered?.entries || []).find(
+          (e) => e.pictureId === entry.pictureId &&
+            e.renderKey === entry.renderKey && fs.existsSync(e.file),
+        );
+        if (cached) fs.copyFileSync(cached.file, entry.file);
+        else await this.renderPicture(this.picture(entry.pictureId), renderCfg, entry.file);
+      }
+    }
+    // Manual intents are relative to the actual next contact, even if that contact is late.
+    const manual = [];
+    for (const change of pending.filter((p) =>
+      ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
+    ))
+      for (const pictureId of change.payload.remaining ||
+        change.payload.pictureIds) {
+        if (manual.length >= f.buffer + 1) break;
+        const file = path.join(dir, `manual-${manual.length}.png`);
+        await this.renderPicture(this.picture(pictureId), renderCfg, file);
+        manual.push({
+          pictureId,
+          file,
+          renderKey: this.renderKey(pictureId, renderCfg),
+          force: change.payload.force === true,
+          when: change.kind,
+          changeId: change.id,
+        });
+      }
+    f.plan = entries;
+    f.prepared = {
+      id: programId,
+      entries,
+      manual,
+      cutoff,
+      cadence,
+      preparedAt: now,
+    };
+    f.preparing = null;
+    f.prepareError = null;
+    f.dirty = this.s.pending.some(
+      (p) =>
+        p.frameId === f.id &&
+        unsent(p) &&
+        !p.withdrawn &&
+        !cutoff.includes(p.id),
+    );
+    this.save();
+  }
+  renderKey(pid, cfg) {
+    const p = this.picture(pid);
+    return JSON.stringify([
+      cfg.panel, cfg.image, p.revision,
+      ...(p.combo?.memberIds.map((id) => this.picture(id).revision) || []),
+    ]);
+  }
+  programSchedule(f, events, now = Date.now()) {
+    const clock = this.clock(f, true);
     const normalTimes = [
       clock.prev(now) || now,
       ...clock.upcoming(f.buffer, now),
     ];
     const times = new Set(normalTimes);
-    const events = this.eventsFor(f.id).filter((e) => e.end > now);
     const horizon = Math.max(now, ...events.map((e) => e.end));
     // A future Event must not stretch the last normal slot across all the intervening days.
     for (let t = clock.next(now); t <= horizon; t = clock.next(t)) {
@@ -173,168 +346,7 @@ export class Runtime {
         'Event enthält zu viele Wechsel. Kürzer oder langsamer einstellen.',
         422,
       );
-    const reorder = [
-      ...(pending
-        .filter((p) => p.kind === 'reihenfolge' && p.payload.order)
-        .at(-1)?.payload.order || []),
-    ];
-    const showAt = this.nextOnline(f);
-    const nextAt = clock.next(showAt);
-    const reorderAt = this.immediate(f) ? clock.next(now) : nextAt;
-    const actions = pending.filter((p) =>
-      ['erkennungsbild', 'testbild'].includes(p.kind),
-    );
-    const taken = pending
-      .filter((p) => ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind))
-      .flatMap((p) => p.payload.remaining || p.payload.pictureIds);
-    const entries = [];
-    f.shortage = 0;
-    for (let i = 0; i < schedule.length; i++) {
-      const at = schedule[i];
-      const event = events.find((e) => at >= e.start && at < e.end);
-      let chosen = null;
-      if (at >= reorderAt && reorder.length)
-        chosen = { pictureId: reorder.shift() };
-      if (!chosen && event) {
-        const pictures = this.eventAssignments(event)[f.id] || [];
-        const n = Math.floor(
-          (Math.max(at, event.start) - event.start) / (event.everyMin * 60000),
-        );
-        const pid = pictures[n % pictures.length];
-        if (
-          pid &&
-          (event.sameOnAll || !this.owners(pid).some((owner) => owner !== f.id))
-        )
-          chosen = { pictureId: pid, force: event.sameOnAll };
-      }
-      if (!chosen && i === 0 && f.current?.pictureId)
-        chosen = { pictureId: f.current.pictureId, preserve: true };
-      if (!chosen) {
-        const old = (f.plan || []).find((e) => e.at === at && !e.changeId);
-        if (
-          old &&
-          this.s.pictures.some(
-            (p) =>
-              p.id === old.pictureId && p.status === 'accepted' && !p.paused,
-          ) &&
-          !taken.includes(old.pictureId) &&
-          !this.owners(old.pictureId).some((owner) => owner !== f.id)
-        )
-          chosen = old;
-      }
-      if (!chosen) {
-        const pid = this.draw(f, taken);
-        if (pid) chosen = { pictureId: pid };
-      }
-      if (!chosen && !entries.length) {
-        const pid = pending.find((p) =>
-          ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
-        )?.payload.pictureIds[0];
-        if (pid) chosen = { pictureId: pid, preserve: true };
-      }
-      if (!chosen && entries.length) {
-        f.shortage++;
-        const fallback = event
-          ? entries.at(-1)
-          : entries.findLast((e) => !e.eventId && e.pictureId);
-        chosen = {
-          pictureId:
-            fallback?.pictureId ||
-            f.current?.pictureId ||
-            entries.at(-1).pictureId,
-          preserve: true,
-        };
-      }
-      if (!chosen && actions.length) chosen = { pictureId: null };
-      if (!chosen) continue;
-      if (chosen.pictureId) {
-        this.reserve(chosen.pictureId, f.id, chosen.force || chosen.preserve);
-        taken.push(chosen.pictureId);
-      }
-      entries.push({
-        pictureId: chosen.pictureId,
-        at,
-        eventId: event?.id || null,
-        changeId: chosen.changeId || null,
-        pinned: !!chosen.changeId,
-        file: path.join(dir, `${entries.length}.png`),
-      });
-    }
-    if (!entries.length) {
-      f.prepareError =
-        'Noch keine passenden Bilder. Der Rahmen behält sein Bild.';
-      f.dirty = false;
-      this.save();
-      return;
-    }
-    // Claims and preparation identity are durable before expensive renders yield control.
-    f.preparing = { id: programId, entries, cutoff };
-    this.save();
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      const action = i === 0 || !entry.pictureId ? actions.at(-1) : null;
-      if (action) {
-        entry.pictureId = null;
-        entry.card = action.kind;
-        await this.renderCard(f, action.kind, entry.file);
-      } else if (entry.pictureId) {
-        const legacy = [
-          f.current?.pictureId === entry.pictureId &&
-            path.join(f.dataDir, 'current', 'device.png'),
-          ...(f.delivered?.entries || [])
-            .filter((e) => e.pictureId === entry.pictureId)
-            .map((e) => e.file),
-        ].find((file) => file && fs.existsSync(file));
-        const edited = pending.some(
-          (p) =>
-            p.kind === 'zuschnitt' && p.payload.pictureId === entry.pictureId,
-        );
-        if (i === 0 && legacy && !edited && !actions.length)
-          fs.copyFileSync(legacy, entry.file);
-        else
-          await this.renderPicture(
-            this.picture(entry.pictureId),
-            renderCfg,
-            entry.file,
-          );
-      }
-    }
-    // Manual intents are relative to the actual next contact, even if that contact is late.
-    const manual = [];
-    for (const change of pending.filter((p) =>
-      ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
-    ))
-      for (const pictureId of change.payload.remaining ||
-        change.payload.pictureIds) {
-        if (manual.length >= f.buffer + 1) break;
-        const file = path.join(dir, `manual-${manual.length}.png`);
-        await this.renderPicture(this.picture(pictureId), renderCfg, file);
-        manual.push({
-          pictureId,
-          file,
-          when: change.kind,
-          changeId: change.id,
-        });
-      }
-    f.plan = entries;
-    f.prepared = {
-      id: programId,
-      entries,
-      manual,
-      cutoff,
-      cadence,
-      preparedAt: now,
-    };
-    f.preparing = null;
-    f.prepareError = null;
-    f.dirty = this.s.pending.some(
-      (p) =>
-        p.frameId === f.id &&
-        unsent(p) &&
-        !p.withdrawn &&
-        !cutoff.includes(p.id),
-    );
-    this.save();
+    return schedule;
   }
   async renderCard(f, kind, file) {
     const cfg = this.apps.get(f.id).cfg;
@@ -407,6 +419,7 @@ export class Runtime {
         ? { kind: entry.card, until: this.clock(f).next(now) }
         : null,
       entryFile: entry.file,
+      force: !!entry.force,
     };
     if (entry.pictureId) this.noteShown(entry.pictureId, f.id, since);
     this.record({
@@ -420,6 +433,89 @@ export class Runtime {
     return true;
   }
 
+  async applySettings(f, selected, device, battery) {
+    const app = this.apps.get(f.id);
+    app.noteBattery(battery);
+    if (battery)
+      this.record({
+        frameId: f.id,
+        kind: 'uebertragung',
+        text: `Akku gelesen: ${battery.batteryPercent}%${battery.pluggedIn ? ', lädt gerade' : ''}`,
+        battery: battery.batteryPercent,
+      });
+    const cleaning = await readCleaning(device);
+    app.noteCleaning(cleaning);
+    if (cleaning?.hour !== undefined)
+      f.observedCleaning = {
+        value: `${String(cleaning.hour).padStart(2, '0')}:${String(cleaning.minute).padStart(2, '0')}`,
+        at: Date.now(),
+      };
+    if (selected.some((p) => p.payload.action === 'pruefen')) {
+      const info = await readDisplayInfo(app.cfg, { device });
+      app.state.displayCheck = { ...info, at: Date.now() };
+      app.noteBattery(info.battery);
+      app.noteCleaning(info.cleaning);
+    }
+    // All settings and read-backs finish before the sole content command.
+    const cleaningChanges = selected.filter(
+      (p) => p.kind === 'reinigung',
+    );
+    const writes = cleaningChanges.slice(-1);
+    for (const p of cleaningChanges.slice(0, -1)) {
+      p.withdrawn = true;
+      this.record({
+        frameId: f.id,
+        kind: 'aenderung',
+        text: `${p.title}: durch neueren Wert ersetzt`,
+        change: { id: p.id, state: 'zurueckgenommen' },
+      });
+    }
+    for (const p of writes) {
+      const [hour, minute] = p.payload.value.split(':').map(Number);
+      try {
+        const read = await writeCleaning(device, hour, minute);
+        if (read.value?.hour !== undefined) {
+          app.noteCleaning(read.value);
+          f.observedCleaning = {
+            value: `${String(read.value.hour).padStart(2, '0')}:${String(read.value.minute).padStart(2, '0')}`,
+            at: Date.now(),
+          };
+        }
+        this.stage(p, read.matches ? 'bestaetigt' : 'abweichend', {
+          sentAt: Date.now(),
+          ...(read.matches
+            ? { confirmedAt: Date.now() }
+            : {
+                deviceValue:
+                  f.observedCleaning?.value || 'nicht lesbar',
+              }),
+        });
+      } catch {
+        this.stage(p, 'uebertragen', {
+          sentAt: Date.now(),
+          verification: 'Reinigungszeit nicht zurückgemeldet',
+        });
+      }
+    }
+    for (const p of this.s.pending.filter(
+      (p) =>
+        p.frameId === f.id &&
+        p.kind === 'reinigung' &&
+        p.state === 'uebertragen' &&
+        !writes.includes(p),
+    ))
+      if (f.observedCleaning)
+        this.stage(
+          p,
+          f.observedCleaning.value === p.payload.value
+            ? 'bestaetigt'
+            : 'abweichend',
+          f.observedCleaning.value === p.payload.value
+            ? { confirmedAt: Date.now() }
+            : { deviceValue: f.observedCleaning.value },
+        );
+    this.save();
+  }
   async deliver(f) {
     const app = this.apps.get(f.id);
     if (this.guarded(f) || !f.prepared || app.busy || f.removed) return false;
@@ -428,6 +524,33 @@ export class Runtime {
       this.advanceFrame(f);
       const prepared = f.prepared;
       const now = Date.now();
+      const selected = this.s.pending.filter(
+        (p) => prepared.cutoff.includes(p.id) && !p.withdrawn && unsent(p),
+      );
+      if (!prepared.entries.length) {
+        const settings = selected.filter((p) =>
+          p.kind === 'reinigung' || p.payload.action === 'pruefen',
+        );
+        if (!settings.length) return false;
+        for (const p of settings) p.applying = true;
+        this.save();
+        try {
+          await withDisplay(app.cfg, { wol: false }, async (device) => {
+            await this.applySettings(f, settings, device, null);
+          });
+          for (const p of settings.filter((p) => p.payload.action === 'pruefen'))
+            this.stage(p, 'bestaetigt', { confirmedAt: Date.now() });
+          f.lastOnline = Date.now();
+          f.prepared = null;
+          return true;
+        } catch {
+          return false;
+        } finally {
+          for (const p of settings) delete p.applying;
+          f.dirty = true;
+          this.save();
+        }
+      }
       let entries = prepared.entries.filter((e) => e.at > now);
       const first = prepared.entries.filter((e) => e.at <= now).at(-1);
       if (!first || !fs.existsSync(first.file)) return false;
@@ -437,21 +560,23 @@ export class Runtime {
       const manual = prepared.manual || [];
       const nowItems = manual.filter((e) => e.when === 'zeigen-jetzt');
       const nextItems = manual.filter((e) => e.when === 'zeigen-naechstes');
+      const appliedManual = [];
       if (nowItems.length || nextItems.length) {
         const forced = [...nowItems, ...nextItems];
         const start = nowItems.length ? 0 : 1;
         // Preserve all explicitly selected pictures in order, even beyond the normal horizon.
-        for (
-          let i = 0;
-          i < Math.min(forced.length, entries.length - start);
-          i++
-        )
-          entries[start + i] = {
-            ...forced[i],
-            at: start + i === 0 ? now : entries[start + i].at,
+        let n = 0;
+        for (let i = start; i < entries.length && n < forced.length; i++) {
+          if (i > 0 && (entries[i].changeId || entries[i].eventId)) continue;
+          const item = forced[n++];
+          appliedManual.push(item);
+          entries[i] = {
+            ...item,
+            at: i === 0 ? now : entries[i].at,
             pinned: true,
             eventId: null,
           };
+        }
       }
       entries = entries.map((e, i) => ({
         ...e,
@@ -474,9 +599,6 @@ export class Runtime {
           changeId: null,
           tail: true,
         });
-      const selected = this.s.pending.filter(
-        (p) => prepared.cutoff.includes(p.id) && !p.withdrawn && unsent(p),
-      );
       if (
         prepared.cutoff.some(
           (pid) => this.s.pending.find((p) => p.id === pid)?.withdrawn,
@@ -549,95 +671,9 @@ export class Runtime {
               this.save();
             },
             beforeSend: async (device, battery) => {
-              app.noteBattery(battery);
-              if (battery)
-                this.record({
-                  frameId: f.id,
-                  kind: 'uebertragung',
-                  text: `Akku gelesen: ${battery.batteryPercent}%${battery.pluggedIn ? ', lädt gerade' : ''}`,
-                  battery: battery.batteryPercent,
-                });
-              const cleaning = await readCleaning(device);
-              app.noteCleaning(cleaning);
-              if (cleaning?.hour !== undefined)
-                f.observedCleaning = {
-                  value: `${String(cleaning.hour).padStart(2, '0')}:${String(cleaning.minute).padStart(2, '0')}`,
-                  at: Date.now(),
-                };
-              if (selected.some((p) => p.payload.action === 'pruefen')) {
-                const info = await readDisplayInfo(app.cfg, { device });
-                app.state.displayCheck = { ...info, at: Date.now() };
-                app.noteBattery(info.battery);
-                app.noteCleaning(info.cleaning);
-              }
-              // All settings and read-backs finish before the sole content command.
-              const cleaningChanges = selected.filter(
-                (p) => p.kind === 'reinigung',
-              );
-              const writes = cleaningChanges.slice(-1);
-              for (const p of cleaningChanges.slice(0, -1)) {
-                p.withdrawn = true;
-                this.record({
-                  frameId: f.id,
-                  kind: 'aenderung',
-                  text: `${p.title}: durch neueren Wert ersetzt`,
-                  change: { id: p.id, state: 'zurueckgenommen' },
-                });
-              }
-              for (const p of writes) {
-                const [hour, minute] = p.payload.value.split(':').map(Number);
-                try {
-                  const read = await writeCleaning(device, hour, minute);
-                  if (read.value?.hour !== undefined) {
-                    app.noteCleaning(read.value);
-                    f.observedCleaning = {
-                      value: `${String(read.value.hour).padStart(2, '0')}:${String(read.value.minute).padStart(2, '0')}`,
-                      at: Date.now(),
-                    };
-                  }
-                  this.stage(p, read.matches ? 'bestaetigt' : 'abweichend', {
-                    sentAt: Date.now(),
-                    ...(read.matches
-                      ? { confirmedAt: Date.now() }
-                      : {
-                          deviceValue:
-                            f.observedCleaning?.value || 'nicht lesbar',
-                        }),
-                  });
-                } catch {
-                  this.stage(p, 'uebertragen', {
-                    sentAt: Date.now(),
-                    verification: 'Reinigungszeit nicht zurückgemeldet',
-                  });
-                }
-              }
-              for (const p of this.s.pending.filter(
-                (p) =>
-                  p.frameId === f.id &&
-                  p.kind === 'reinigung' &&
-                  p.state === 'uebertragen' &&
-                  !writes.includes(p),
-              ))
-                if (f.observedCleaning)
-                  this.stage(
-                    p,
-                    f.observedCleaning.value === p.payload.value
-                      ? 'bestaetigt'
-                      : 'abweichend',
-                    f.observedCleaning.value === p.payload.value
-                      ? { confirmedAt: Date.now() }
-                      : { deviceValue: f.observedCleaning.value },
-                  );
-              for (const p of selected.filter((p) => p.kind !== 'reinigung')) {
-                const remaining = p.payload.remaining || p.payload.pictureIds;
-                const count = entries.filter((e) => e.changeId === p.id).length;
-                if (remaining && count < remaining.length) continue;
-                this.stage(p, 'uebertragen', {
-                  sentAt: Date.now(),
-                  verification:
-                    'Downloadnachweis, Bild am Rahmen nicht überprüfbar',
-                });
-              }
+              await this.applySettings(f, selected, device, battery);
+              for (const entry of entries)
+                if (entry.pictureId) this.reserve(entry.pictureId, f.id, entry.force);
               commanded = true;
               program.state = 'sending';
               this.save();
@@ -646,10 +682,19 @@ export class Runtime {
         );
         program.state = 'downloaded';
         program.sentAt = Date.now();
+        for (const p of selected.filter((p) => p.kind !== 'reinigung')) {
+          const remaining = p.payload.remaining || p.payload.pictureIds;
+          const count = appliedManual.filter((e) => e.changeId === p.id).length;
+          if (remaining && count < remaining.length) continue;
+          this.stage(p, 'uebertragen', {
+            sentAt: program.sentAt,
+            verification: 'Downloadnachweis, Bild am Rahmen nicht überprüfbar',
+          });
+        }
         for (const p of selected.filter((p) =>
           ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
         )) {
-          const count = entries.filter((e) => e.changeId === p.id).length;
+          const count = appliedManual.filter((e) => e.changeId === p.id).length;
           p.payload.remaining = (
             p.payload.remaining || p.payload.pictureIds
           ).slice(count);
@@ -661,8 +706,7 @@ export class Runtime {
         for (const old of this.s.programs)
           if (
             old.frameId === f.id &&
-            old.id !== program.id &&
-            old.state !== 'failed'
+            old.id !== program.id
           ) {
             old.state = 'retired';
             this.server.releaseContent?.(old.content?.id);
@@ -712,6 +756,9 @@ export class Runtime {
         return true;
       } catch (err) {
         program.state = commanded || this.guarded(f) ? 'uncertain' : 'failed';
+        if (program.state === 'failed') this.server.releaseContent?.(program.content?.id);
+        else for (const p of selected.filter((p) => p.kind !== 'reinigung'))
+          p.verification = 'Übertragung unklar; Abgleich beim nächsten sicheren Kontakt';
         f.lastProblem = {
           at: Date.now(),
           text:
@@ -922,6 +969,7 @@ export class Runtime {
     );
     for (const program of this.s.programs)
       if (!['failed', 'retired'].includes(program.state)) keep.add(program.id);
+      else this.server?.releaseContent?.(program.content?.id);
     const root = path.join(this.root, 'programs');
     if (fs.existsSync(root))
       for (const dir of fs.readdirSync(root)) {
@@ -932,15 +980,29 @@ export class Runtime {
     this.s.programs = this.s.programs.filter(
       (p) => keep.has(p.id) || now - p.builtAt < DAY,
     );
+    const needed = new Set();
+    const retain = (pid) => {
+      if (!pid || needed.has(pid)) return;
+      needed.add(pid);
+      const p = this.s.pictures.find((p) => p.id === pid);
+      for (const member of p?.combo?.memberIds || []) retain(member);
+    };
     for (const p of this.s.pictures)
-      if (
-        p.status === 'discarded' &&
-        p.keptUntil <= now &&
-        !this.owners(p.id).length
-      ) {
-        if (p.file?.startsWith(path.join(this.root, 'media') + path.sep))
-          fs.rmSync(path.dirname(p.file), { recursive: true, force: true });
+      if (p.status !== 'deleted' && !(p.status === 'discarded' && p.keptUntil <= now))
+        retain(p.id);
+    for (const f of this.s.frames.filter((f) => !f.removed)) {
+      retain(f.current?.pictureId);
+      for (const program of [f.delivered, f.prepared, f.preparing, f.sending])
+        for (const e of program?.entries || []) retain(e.pictureId);
+    }
+    for (const program of this.s.programs.filter((p) => !['failed', 'retired'].includes(p.state)))
+      for (const e of program.entries) retain(e.pictureId);
+    for (const p of this.s.pictures)
+      if (p.status === 'deleted' || (p.status === 'discarded' && p.keptUntil <= now)) {
         p.status = 'deleted';
+        if (!needed.has(p.id) && !this.owners(p.id).length &&
+          p.file?.startsWith(path.join(this.root, 'media') + path.sep))
+          fs.rmSync(path.dirname(p.file), { recursive: true, force: true });
       }
     this.save();
   }

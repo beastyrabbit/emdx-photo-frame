@@ -280,7 +280,6 @@ export class Manager {
     for (const p of this.s.pending)
       if (p.applying) {
         delete p.applying;
-        if (p.state !== 'bestaetigt') p.state = 'uebertragen';
       }
     this.save();
     return [...this.apps.values()];
@@ -340,7 +339,7 @@ export class Manager {
       deepSleep: 'tiefschlaf',
       sleepRightAway: 'tiefschlaf',
     }))
-      app[method] = () => this.frameAction(f.id, action);
+      app[method] = async () => this.frameAction(f.id, action);
     // The fallback page must not bypass the shared ownership ledger or wake guard.
     for (const method of ['showArt', 'startShowArtwork', 'startGenerate'])
       app[method] = async () => {
@@ -583,7 +582,7 @@ export class Manager {
       this.queue(f, 'reihenfolge', `${p.title} gelöscht`);
       this.requestPrepare(f);
     }
-    this.save();
+    this.collectGarbage();
   }
   async createCombo(layout, memberIds) {
     const count = {
@@ -709,12 +708,12 @@ export class Manager {
         this.env.IMMICH_URL ||
         this.s.settings.immichUrl ||
         'http://immich-server.photos.svc.cluster.local:2283/api',
-      immichUrlLocked: !!this.env.IMMICH_URL,
+      immichUrlLocked: !!(this.env.IMMICH_URL || this.secrets.external('immich')),
     };
   }
   updateSettings(patch) {
     if (patch.immichUrl !== undefined) {
-      if (this.env.IMMICH_URL)
+      if (this.env.IMMICH_URL || this.secrets.external('immich'))
         throw fail('Immich-Adresse kommt aus der Server-Einrichtung.', 409);
       let url;
       try {
@@ -730,7 +729,12 @@ export class Manager {
         url.hash
       )
         throw fail('Ungültige Immich-Adresse');
-      this.s.settings.immichUrl = url.href.replace(/\/+$/, '');
+      const destination = url.href.replace(/\/+$/, '');
+      if (destination !== this.getSettings().immichUrl.replace(/\/+$/, '')) {
+        this.secrets.set('immich', null);
+        delete this.s.keyTests.immich;
+      }
+      this.s.settings.immichUrl = destination;
     }
     if (patch.autoAccept !== undefined) {
       if (typeof patch.autoAccept !== 'boolean')

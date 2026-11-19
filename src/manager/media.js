@@ -417,6 +417,7 @@ export class Media {
 
   mediaPath(pictureId, variant) {
     const p = this.picture(pictureId);
+    if (p.status === 'deleted') throw fail('Bild nicht gefunden', 404);
     return variant === 'thumb' ? p.thumb : variant === 'image' ? p.file : null;
   }
 }

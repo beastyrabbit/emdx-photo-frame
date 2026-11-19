@@ -118,11 +118,12 @@ export function managerHttp(
     }
     if (p.startsWith('/api/v1/')) {
       try {
-        if (
-          req.method !== 'GET' &&
-          (!sameOrigin(req) || req.headers['x-csrf-token'] !== csrf)
-        )
+        if (req.method !== 'GET' && !sameOrigin(req))
           throw fail('Anfrage von fremder Seite abgelehnt', 403);
+        if (req.method !== 'GET' && req.headers['x-csrf-token'] !== csrf) {
+          json(res, 403, { error: 'Sitzung erneuern', code: 'csrf' });
+          return true;
+        }
         if (p === '/api/v1/uploads' && req.method === 'POST') {
           json(res, 200, await manager.upload(req));
           return true;

@@ -17,19 +17,32 @@ async function token() {
 async function decode<T>(response: Response): Promise<T> {
   const result = await response.json()
   if (!response.ok) {
-    if (response.status === 403) csrf = undefined
     throw new Error(result.error || "Anfrage fehlgeschlagen")
   }
   return result as T
+}
+async function mutate(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      ...init,
+      method: "POST",
+      credentials: "same-origin",
+      headers: { ...init.headers, "X-CSRF-Token": await token() },
+    })
+    if (attempt === 0 && response.status === 403 && (await response.clone().json()).code === "csrf") {
+      csrf = undefined
+      continue
+    }
+    return response
+  }
 }
 async function call<T>(name: string, args: unknown[], write = false): Promise<T> {
   const headers: Record<string, string> = {}
   if (write) {
     headers["Content-Type"] = "application/json"
-    headers["X-CSRF-Token"] = await token()
   }
   const url = `/api/v1/call/${name}${write ? "" : `?args=${encodeURIComponent(JSON.stringify(args))}`}`
-  return decode<T>(await fetch(url, { method: write ? "POST" : "GET", headers, credentials: "same-origin", ...(write ? { body: JSON.stringify(args) } : {}) }))
+  return decode<T>(await (write ? mutate(url, { headers, body: JSON.stringify(args) }) : fetch(url, { credentials: "same-origin" })))
 }
 
 export const httpApi: PhotoFrameApi = {
@@ -97,5 +110,5 @@ export const httpApi: PhotoFrameApi = {
 export async function uploadPictures(files: File[]): Promise<{ results: { name: string; id?: string; error?: string }[] }> {
   const form = new FormData()
   for (const file of Array.from(files)) form.append("files", file)
-  return decode(await fetch("/api/v1/uploads", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": await token() }, body: form }))
+  return decode(await mutate("/api/v1/uploads", { body: form }))
 }

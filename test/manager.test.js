@@ -804,7 +804,7 @@ test('optional UI_PASSWORD protects manager reads, uploads and fallback page', a
   assert.equal(response.status, 200);
 });
 
-test('manual show-now is applied once at contact; long selections keep a bounded buffer and backlog', async (t) => {
+test('S2 manual show-now is applied once at contact; long selections keep a bounded buffer and backlog', async (t) => {
   const fake = await startFakeEmdx();
   t.after(() => fake.close());
   const { manager, frame } = await setup(t, { fake });
@@ -835,16 +835,24 @@ test('manual show-now is applied once at contact; long selections keep a bounded
   assert.deepEqual(change.payload.remaining, ids.slice(4));
   assert.equal(change.state, 'eingestellt');
   assert.equal(change.kind, 'zeigen-naechstes');
+  let now = frame.delivered.entries[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
   frame.guard = null;
   await manager.prepare(frame);
   assert.equal(await manager.deliver(frame), true);
   assert.deepEqual(
     frame.delivered.entries
       .filter((e) => !e.tail)
-      .slice(1)
       .map((e) => e.pictureId),
-    ids.slice(4),
+    ids.slice(1, 5),
   );
+  assert.deepEqual(change.payload.remaining, ids.slice(5));
+  for (let i = 2; i <= 3; i++) {
+    now = frame.delivered.entries[1].at + 1;
+    await manager.prepare(frame);
+    assert.equal(await manager.deliver(frame), true);
+    assert.deepEqual(frame.delivered.entries.filter((e) => !e.tail).map((e) => e.pictureId), ids.slice(i, i + 4));
+  }
   assert.equal(change.state, 'uebertragen');
 });
 
@@ -915,4 +923,291 @@ test('a new frame with no free pictures can receive and hold its identification 
     fake.events.filter((e) => e.startsWith('cmd:')).at(-1),
     'cmd:c7',
   );
+});
+
+async function serving(t, manager) {
+  const server = createServer(manager.base, [...manager.apps.values()], { manager });
+  await server.listen();
+  t.after(() => server.close());
+  manager.server = server;
+  for (const app of manager.apps.values()) app.server = server;
+  return server;
+}
+
+test('S1 refill reuses the matching delivered PNG and invalidates it on rendering changes', async (t) => {
+  const { manager, frame } = await setup(t);
+  await manager.prepare(frame);
+  const entries = frame.prepared.entries.map((e, i, all) => ({
+    ...e, durationMs: (all[i + 1]?.at || manager.clock(frame).next(e.at)) - e.at,
+  }));
+  frame.delivered = { id: frame.prepared.id, entries, builtAt: entries[0].at };
+  frame.current = { pictureId: entries[0].pictureId, entryFile: entries[0].file };
+  const currentDir = manager.apps.get(frame.id).store.path('current');
+  fs.copyFileSync(entries[0].file, path.join(currentDir, 'device.png'));
+  const now = entries[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
+  manager.advanceFrame(frame);
+  assert.equal(frame.current.pictureId, entries[1].pictureId);
+  await manager.prepare(frame);
+  assert.deepEqual(fs.readFileSync(frame.prepared.entries[0].file), fs.readFileSync(entries[1].file));
+  assert.notDeepEqual(fs.readFileSync(frame.prepared.entries[0].file), fs.readFileSync(entries[0].file));
+  const render = t.mock.method(manager, 'renderPicture', manager.renderPicture.bind(manager));
+  manager.updatePicture(frame.current.pictureId, { crop: { orientation: 'hoch', crop: { x: 50, y: 50, zoom: 2, auto: false } } });
+  await manager.prepare(frame);
+  assert.ok(render.mock.calls.some((c) => c.arguments[0].id === frame.current.pictureId));
+  const key = frame.prepared.entries[0].renderKey;
+  manager.updateFrame(frame.id, { upsideDown: true });
+  await manager.prepare(frame);
+  assert.notEqual(frame.prepared.entries[0].renderKey, key);
+});
+
+test('S3 successful delivery retains manual backlog and concurrent reservations', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake });
+  await serving(t, manager);
+  const ids = manager.listPictures().map((p) => p.id);
+  manager.show({ pictureIds: ids.slice(0, 7), scope: { frameId: frame.id }, when: 'jetzt', force: true });
+  await manager.prepare(frame);
+  const app = manager.apps.get(frame.id);
+  const note = app.noteCleaning.bind(app);
+  let queued = false;
+  app.noteCleaning = (...args) => {
+    note(...args);
+    if (!queued) {
+      queued = true;
+      manager.show({ pictureIds: [ids[7]], scope: { frameId: frame.id }, when: 'naechstes', force: true });
+    }
+  };
+  assert.equal(await manager.deliver(frame), true);
+  for (const pid of ids.slice(4, 8)) {
+    assert.ok(manager.owners(pid).includes(frame.id));
+    assert.throws(() => manager.reserve(pid, 'another-frame'), /anderen Rahmen/);
+  }
+});
+
+test('S3 delivery revalidates manual ownership before the content command', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake });
+  await serving(t, manager);
+  const pid = manager.listPictures()[0].id;
+  manager.show({ pictureIds: [pid], scope: { frameId: frame.id }, when: 'jetzt', force: false });
+  await manager.prepare(frame);
+  const app = manager.apps.get(frame.id);
+  const note = app.noteCleaning.bind(app);
+  app.noteCleaning = (...args) => {
+    note(...args);
+    manager.reserve(pid, 'another-frame', true);
+  };
+  assert.equal(await manager.deliver(frame), false);
+  assert.ok(!fake.events.includes('cmd:c7'));
+  assert.equal(manager.s.pending.find((p) => p.payload.pictureIds).state, 'eingestellt');
+  // A deliberate forced request still permits shared ownership on later refills.
+  manager.s.pending.find((p) => p.payload.pictureIds).payload.force = true;
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), true);
+  const now = frame.guard.until + 1;
+  t.mock.method(Date, 'now', () => now);
+  // Keep this forced image current through a button wake after leaving Wi-Fi.
+  frame.delivered.builtAt = now;
+  frame.guard = null;
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), true);
+});
+
+test('S4 global reorder uses the shared deck and respects another frame\'s locked cards', async (t) => {
+  const { manager, frame } = await setup(t);
+  await manager.prepare(frame);
+  const other = manager.addFrame({
+    name: 'Zweiter', device: 'Frame 2', ip: '127.0.0.2', orientation: 'hoch', upsideDown: false,
+    power: 'akku', cadence: frame.cadence, cleaning: '05:50', buffer: 3, groupId: 'default', pin: null,
+  });
+  await manager.prepare(manager.frame(other.id));
+  const movable = manager.getDeck('default', 'hoch').cards.find((c) => !c.locked && !c.frameId);
+  assert.ok(movable);
+  manager.moveDeckCard('default', 'hoch', movable.pictureId, 0);
+  assert.ok(manager.s.pending.filter((p) => p.title === 'Reihenfolge im Stapel geändert').every((p) => !p.payload.order));
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries[1].pictureId, movable.pictureId);
+  await manager.prepare(manager.frame(other.id));
+  for (const f of [frame, manager.frame(other.id)])
+    for (const e of f.prepared.entries)
+      assert.ok(manager.owners(e.pictureId).every((owner) => owner === f.id));
+});
+
+test('S5 timeline reorder cannot override Event assignments', async (t) => {
+  const { manager, frame } = await setup(t);
+  const clock = manager.clock(frame);
+  const start = clock.next(Date.now());
+  const ids = manager.listPictures().map((p) => p.id);
+  const event = manager.saveEvent({ name: 'Event', start, end: start + 2 * H, everyMin: 60,
+    frameIds: [frame.id], pictureIds: ids.slice(0, 2), sameOnAll: false });
+  manager.queue(frame, 'reihenfolge', 'Reorder', { order: ids.slice(2, 6), reorderAt: start });
+  await manager.prepare(frame);
+  assert.deepEqual(frame.prepared.entries.filter((e) => e.eventId === event.id).map((e) => e.pictureId), ids.slice(0, 2));
+});
+
+test('S6 an Event outside compilation limits is rejected without blocking normal refills', async (t) => {
+  const { manager, frame } = await setup(t);
+  const before = structuredClone(manager.s.claims);
+  const start = Date.now() + 40 * DAY;
+  assert.throws(() => manager.saveEvent({ name: 'Zu weit weg', start, end: start + H, everyMin: 60,
+    frameIds: [frame.id], pictureIds: [manager.listPictures()[0].id], sameOnAll: false }), /weit voraus|viele Wechsel/);
+  assert.equal(manager.s.events.length, 0);
+  assert.deepEqual(manager.s.claims, before);
+  assert.equal(manager.s.pending.length, 0);
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries.length, frame.buffer + 1);
+});
+
+test('S7 failed download retains content intent through restart and forbids a same-wake retry', async (t) => {
+  const fake = await startFakeEmdx({ fetchImage: false });
+  t.after(() => fake.close());
+  const { manager, frame, seeds, model, env } = await setup(t, { fake });
+  await serving(t, manager);
+  manager.apps.get(frame.id).cfg.display.fetchTimeoutSec = 0.03;
+  const pid = manager.listPictures()[0].id;
+  manager.show({ pictureIds: [pid], scope: { frameId: frame.id }, when: 'jetzt', force: true });
+  const change = manager.s.pending.at(-1);
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), false);
+  assert.equal(change.state, 'eingestellt');
+  assert.equal(change.sentAt, undefined);
+  assert.equal(change.payload.remaining, undefined);
+  assert.ok(!change.verification.includes('Downloadnachweis'));
+  assert.equal(await manager.deliver(frame), false);
+  assert.equal(fake.events.filter((e) => e === 'cmd:c7').length, 1);
+  // Also exercise a crash while applying, before a successful download was recorded.
+  change.applying = true;
+  manager.save();
+  const restarted = new Manager(seeds, model, { env });
+  await restarted.initialize();
+  const restored = restarted.s.pending.find((p) => p.id === change.id);
+  assert.equal(restored.state, 'eingestellt');
+  assert.equal(restored.applying, undefined);
+  assert.equal(restarted.guarded(restarted.frame(frame.id)), true);
+  const now = frame.guard.until + 1;
+  t.mock.method(Date, 'now', () => now);
+  await restarted.prepare(restarted.frame(frame.id));
+  assert.equal(restarted.frame(frame.id).prepared.manual[0].pictureId, pid);
+});
+
+test('S8 deleted media returns 404 and is reclaimed after delivered programs and combinations release it', async (t) => {
+  const { manager, frame } = await setup(t);
+  const server = await serving(t, manager);
+  const [a, b, c] = manager.s.pictures;
+  frame.delivered = { id: 'fixture', entries: [{ pictureId: a.id, file: a.file }] };
+  manager.deletePicture(a.id);
+  for (const variant of ['image', 'thumb'])
+    assert.equal((await fetch(`${server.baseUrl}/api/v1/media/${encodeURIComponent(a.id)}/${variant}`)).status, 404);
+  assert.ok(fs.existsSync(a.file));
+  frame.delivered = null;
+  manager.collectGarbage();
+  assert.ok(!fs.existsSync(a.file));
+  const combo = await manager.createCombo('2-uebereinander', [b.id, c.id]);
+  manager.deletePicture(b.id);
+  assert.ok(fs.existsSync(b.file));
+  manager.deletePicture(combo.id);
+  assert.ok(!fs.existsSync(b.file));
+  assert.ok(!fs.existsSync(manager.picture(combo.id).file));
+});
+
+test('S9 changing Immich destination clears its write-only credential; env key locks the destination', async (t) => {
+  const { manager } = await setup(t);
+  manager.updateSettings({ immichUrl: 'http://127.0.0.1:1234/api' });
+  manager.saveKey('immich', 'fixture-destination-key');
+  manager.s.keyTests.immich = { status: 'funktioniert' };
+  manager.updateSettings({ immichUrl: 'http://127.0.0.1:1234/api/' });
+  assert.ok(manager.secrets.get('immich'));
+  manager.updateSettings({ immichUrl: 'http://127.0.0.1:5678/api' });
+  assert.equal(manager.secrets.get('immich'), null);
+  assert.equal(manager.s.keyTests.immich, undefined);
+  assert.throws(() => manager.immichClient(), /Schlüssel fehlt/);
+  manager.env.IMMICH_API_KEY = 'fixture-env-key';
+  assert.equal(manager.getSettings().immichUrlLocked, true);
+  assert.throws(() => manager.updateSettings({ immichUrl: 'http://127.0.0.1:9876/api' }), /Server-Einrichtung/);
+  assert.equal(manager.immichClient().base, 'http://127.0.0.1:5678/api');
+});
+
+test('S10 fallback actions keep their Promise contract and answer HTTP requests', async (t) => {
+  const { manager, frame } = await setup(t);
+  const server = await serving(t, manager);
+  const app = manager.apps.get(frame.id);
+  for (const method of ['next', 'resend', 'testPattern', 'displayInfo', 'deepSleep', 'sleepRightAway']) {
+    const result = app[method]();
+    assert.equal(typeof result?.then, 'function', method);
+    await result;
+  }
+  for (const route of ['next', 'resend', 'test-pattern', 'sleep', 'deep-sleep', 'display-info']) {
+    const response = await fetch(`${server.baseUrl}/api/${route}`, { method: 'POST', signal: AbortSignal.timeout(2000) });
+    assert.equal(response.status, route === 'display-info' ? 200 : 202);
+  }
+});
+
+test('S11 recompiled timeline reorder retains its boundary at the scheduled wake', async (t) => {
+  const { manager, frame } = await setup(t);
+  await manager.prepare(frame);
+  const original = frame.prepared.entries;
+  frame.current = { pictureId: original[0].pictureId, since: original[0].at };
+  frame.delivered = { id: frame.prepared.id, builtAt: original[0].at, entries: original.map((e, i) => ({
+    ...e, durationMs: (original[i + 1]?.at || manager.clock(frame).next(e.at)) - e.at,
+  })) };
+  manager.moveTimelineItem(frame.id, original[3].pictureId, 0);
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries[1].pictureId, original[1].pictureId);
+  assert.equal(frame.prepared.entries[2].pictureId, original[3].pictureId);
+  const now = original[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
+  manager.advanceFrame(frame);
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries[0].pictureId, original[1].pictureId);
+  assert.equal(frame.prepared.entries[1].at, original[2].at);
+  assert.equal(frame.prepared.entries[1].pictureId, original[3].pictureId);
+  assert.equal(frame.prepared.entries[2].pictureId, original[2].pictureId);
+});
+
+test('S13 preflight failure releases registered URLs and retired programs release registrations', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake });
+  const server = await serving(t, manager);
+  const app = manager.apps.get(frame.id);
+  const note = app.noteCleaning;
+  app.noteCleaning = () => { throw new Error('preflight failure'); };
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), false);
+  const failed = manager.s.programs.at(-1);
+  assert.equal(failed.state, 'failed');
+  assert.ok(failed.content.id);
+  assert.equal((await fetch(`${server.baseUrl}/emdx/${failed.content.id}/content.json`)).status, 404);
+  assert.ok(!fake.events.includes('cmd:c7'));
+  // A registration restored by an earlier process is also released on retirement/GC.
+  server.restoreContent(failed.content);
+  failed.state = 'retired';
+  manager.collectGarbage();
+  assert.equal((await fetch(`${server.baseUrl}/emdx/${failed.content.id}/content.json`)).status, 404);
+  app.noteCleaning = note;
+  assert.equal(await manager.deliver(frame), true);
+  assert.equal((await fetch(`${server.baseUrl}/emdx/${failed.content.id}/content.json`)).status, 404);
+});
+
+test('S14 settings and device checks work without pictures and still respect the content guard', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake, count: 0 });
+  manager.updateFrame(frame.id, { cleaning: '06:42' });
+  manager.frameAction(frame.id, 'pruefen');
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), true);
+  assert.ok(fake.events.includes('cmd:1b:176,128,2,6,42'));
+  assert.ok(!fake.events.includes('cmd:c7'));
+  assert.equal(manager.s.pending.find((p) => p.kind === 'reinigung').state, 'bestaetigt');
+  assert.equal(manager.s.pending.find((p) => p.payload.action === 'pruefen').state, 'bestaetigt');
+  manager.markUpdated(frame);
+  manager.frameAction(frame.id, 'pruefen');
+  await manager.prepare(frame);
+  const before = fake.events.length;
+  assert.equal(await manager.deliver(frame), false);
+  assert.equal(fake.events.length, before);
 });

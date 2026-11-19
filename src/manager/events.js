@@ -114,6 +114,13 @@ export class Events {
     for (const pid of draft.pictureIds)
       if (this.picture(pid).status !== 'accepted')
         throw fail('Event-Bilder erst übernehmen');
+    // Reject an unbuildable Event before persisting it or taking reservations.
+    const now = Date.now();
+    for (const fid of draft.frameIds)
+      this.programSchedule(this.frame(fid), [
+        ...this.eventsFor(fid).filter((e) => e.id !== draft.id && e.end > now),
+        ...(draft.end > now ? [draft] : []),
+      ], now);
   }
   saveEvent(draft) {
     const estimate = this.estimateEvent(draft);

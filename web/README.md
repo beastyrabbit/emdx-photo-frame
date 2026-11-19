@@ -32,14 +32,14 @@ Add `?darstellung=dunkel` or `?darstellung=hell` to any address to force dark or
 
 Everything the interface knows comes through one typed object:
 
-| File                | Role                                                                       |
-| ------------------- | -------------------------------------------------------------------------- |
-| `src/api/types.ts`  | The data shapes (frames, pending changes, pictures, decks, Events …)       |
-| `src/api/client.ts` | `PhotoFrameApi`: every call the interface makes                            |
+| File                | Role                                                                           |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `src/api/types.ts`  | The data shapes (frames, pending changes, pictures, decks, Events …)           |
+| `src/api/client.ts` | `PhotoFrameApi`: every call the interface makes                                |
 | `src/api/index.ts`  | **The seam.** Exports `api`: the HTTP client, or the mock with `VITE_API=mock` |
-| `src/api/http.ts`   | The client for the service's `/api/v1` endpoints (`src/manager/http.js`)   |
-| `src/api/mock/`     | In-memory implementation: `seed.ts` is the house, `index.ts` the behaviour |
-| `src/api/hooks.ts`  | TanStack Query hooks around `api`; screens use only these                  |
+| `src/api/http.ts`   | The client for the service's `/api/v1` endpoints (`src/manager/http.js`)       |
+| `src/api/mock/`     | In-memory implementation: `seed.ts` is the house, `index.ts` the behaviour     |
+| `src/api/hooks.ts`  | TanStack Query hooks around `api`; screens use only these                      |
 
 A change to the contract touches `types.ts`, `client.ts`, `http.ts`, the mock and the backend in `src/manager/` together. Only the mock shows the "Knopf drücken" stand-in on the frame page.
 
