@@ -279,17 +279,17 @@ export class Integrations {
         `/assets/${encodeURIComponent(assetId)}`,
       );
       if (meta.type !== 'IMAGE' || meta.isTrashed || meta.isOffline) continue;
-      const { bytes } = await client.request(
-        `/assets/${encodeURIComponent(assetId)}/original?edited=true`,
-        null,
-        true,
-      );
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-import-'));
       try {
-        const file = path.join(dir, 'image');
-        fs.writeFileSync(file, bytes, { mode: 0o600 });
         let p;
         try {
+          const { bytes } = await client.request(
+            `/assets/${encodeURIComponent(assetId)}/original?edited=true`,
+            null,
+            true,
+          );
+          const file = path.join(dir, 'image');
+          fs.writeFileSync(file, bytes, { mode: 0o600 });
           p = await this.ingest(file, {
             title: meta.originalFileName || 'Immich-Bild',
             source: 'immich',
@@ -298,6 +298,7 @@ export class Integrations {
             ref: assetId,
           });
         } catch (err) {
+          // Only a picture that can never be taken is skipped; network and disk errors retry.
           if (!skipRejected || ![413, 415].includes(err.status)) throw err;
           this.s.importSkipped = this.s.importSkipped || {};
           this.s.importSkipped[assetId] = Date.now();
