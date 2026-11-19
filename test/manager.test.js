@@ -620,6 +620,42 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
   );
 });
 
+test('Immich thumbnail proxy serves only raster images, never upstream HTML', async (t) => {
+  const image = await sharp({
+    create: { width: 4, height: 4, channels: 3, background: '#bcacac' },
+  })
+    .jpeg()
+    .toBuffer();
+  const immich = http.createServer((req, res) => {
+    if (req.url.startsWith('/api/assets/good/thumbnail')) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.end(image);
+    } else {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<script>alert(1)</script>');
+    }
+  });
+  await new Promise((r) => immich.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => immich.close(r)));
+  const { manager } = await setup(t);
+  manager.updateSettings({
+    immichUrl: `http://127.0.0.1:${immich.address().port}/api`,
+  });
+  manager.saveKey('immich', 'fixture-key');
+  const server = createServer(manager.base, [...manager.apps.values()], {
+    manager,
+  });
+  await server.listen();
+  t.after(() => server.close());
+  const good = await fetch(`${server.baseUrl}/api/v1/immich/thumbnail/good`);
+  assert.equal(good.status, 200);
+  assert.equal(good.headers.get('content-type'), 'image/jpeg');
+  assert.match(good.headers.get('content-security-policy'), /sandbox/);
+  const evil = await fetch(`${server.baseUrl}/api/v1/immich/thumbnail/evil`);
+  assert.notEqual(evil.status, 200);
+  assert.ok(!(await evil.text()).includes('<script>'));
+});
+
 test('real HTTP API: CSRF, streaming multipart partial failures, secret write-only, protected media and SPA', async (t) => {
   const { manager } = await setup(t);
   const server = createServer(manager.base, [...manager.apps.values()], {

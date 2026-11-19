@@ -29,7 +29,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm --prefix web ci
-      - run: sudo apt-get update && sudo apt-get install -y libheif-examples libde265-0 util-linux
+      - run: sudo apt-get update && sudo apt-get install -y libheif-examples libheif-plugin-libde265 util-linux
       - run: npm test
       - run: npm --prefix web run build
       - run: npm --prefix web run check

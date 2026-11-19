@@ -150,11 +150,16 @@ export function managerHttp(
                 null,
                 true,
               );
+            // Serve only raster image types from Immich, never its HTML or SVG on our origin.
+            const type = String(data.type).split(';')[0].trim().toLowerCase();
+            if (!['image/jpeg', 'image/webp', 'image/png'].includes(type))
+              throw fail('Ungültiges Vorschaubild', 502);
             res
               .writeHead(200, {
-                'Content-Type': data.type,
+                'Content-Type': type,
                 'Cache-Control': 'private, max-age=300',
                 'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "sandbox; default-src 'none'",
               })
               .end(data.bytes);
           } else {
