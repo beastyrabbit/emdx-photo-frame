@@ -30,6 +30,8 @@ We merge upstream changes from the `upstream` remote from time to time. Generic 
 | Upload from a phone | planned |
 | Change every N days (a cron step such as `*/2` restarts at each month's end) | planned |
 | Immich as a picture source | planned |
+| New web page, phone first: settings change at the frame's next wake or at once after a button press | in progress |
+| Samsung "Custom App" content source (our own app on the frame) | tested 19 November 2026 and shelved: the frame installs only Samsung-signed packages. Frames on mains power use the normal "Mobile" source with network standby on instead. |
 
 The planned items wait for the hardware check and for a written extension design. Their exact shape may still change.
 
