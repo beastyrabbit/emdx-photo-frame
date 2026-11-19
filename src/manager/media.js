@@ -93,7 +93,8 @@ export async function normalize(file, maxSide = 5120) {
         await exec(
           'prlimit',
           [
-            '--as=402653184',
+            // Address space, not memory in use: 384 MiB rejected 24 and 48 MP phone HEICs.
+            '--as=805306368',
             '--fsize=335544320',
             '--cpu=25',
             '--',

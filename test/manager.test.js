@@ -991,6 +991,41 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
   );
 });
 
+test('an album subscription skips a picture it cannot take and imports the rest', async (t) => {
+  const image = await sharp({
+    create: { width: 140, height: 200, channels: 3, background: '#bcacac' },
+  })
+    .jpeg()
+    .toBuffer();
+  const immich = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/server/version')
+      res.end(JSON.stringify({ major: 3, minor: 4, patch: 2 }));
+    else if (req.url.startsWith('/api/search/'))
+      res.end(JSON.stringify({ assets: { items: [{ id: 'bad', type: 'IMAGE' }, { id: 'good', type: 'IMAGE' }], nextCursor: null } }));
+    else if (req.url.includes('/original')) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.end(req.url.includes('/bad/') ? Buffer.from('not a picture') : image);
+    } else if (req.url.startsWith('/api/assets/'))
+      res.end(JSON.stringify({ type: 'IMAGE', originalFileName: req.url.includes('/bad') ? 'kaputt.jpg' : 'gut.jpg', fileCreatedAt: '2026-01-01T00:00:00Z' }));
+    else {
+      res.statusCode = 404;
+      res.end('{}');
+    }
+  });
+  await new Promise((r) => immich.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => immich.close(r)));
+  const { manager } = await setup(t);
+  manager.updateSettings({ immichUrl: `http://127.0.0.1:${immich.address().port}/api` });
+  manager.saveKey('immich', 'fixture-key');
+  manager.s.subscriptions['album-1'] = { on: true, name: 'Familie' };
+  await manager.pollSubscriptions();
+  assert.ok(manager.s.imported.good);
+  assert.ok(manager.s.importSkipped.bad);
+  await manager.pollSubscriptions();
+  assert.equal(manager.listInbox().filter((p) => p.source === 'immich').length, 1);
+});
+
 test('Immich thumbnail proxy serves only raster images, never upstream HTML', async (t) => {
   const image = await sharp({
     create: { width: 4, height: 4, channels: 3, background: '#bcacac' },
