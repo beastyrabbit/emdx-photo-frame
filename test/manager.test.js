@@ -14,7 +14,7 @@ import { ManagerStore } from '../src/manager/store.js';
 import { Secrets } from '../src/manager/secrets.js';
 import { cadenceClock, cadenceFromCron } from '../src/manager/clock.js';
 import { tcpProbe } from '../src/manager/runtime.js';
-import { normalize, MAX_FILE, MIN_FREE } from '../src/manager/media.js';
+import { normalize, undecodable, MAX_FILE, MIN_FREE } from '../src/manager/media.js';
 import { batteryEstimate } from '../src/manager/status.js';
 import { Immich } from '../src/manager/integrations.js';
 import { createServer } from '../src/server.js';
@@ -991,6 +991,27 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
   );
 });
 
+test('only corrupt input counts as undecodable; memory pressure and system errors retry', () => {
+  assert.equal(undecodable(new Error('Input buffer has corrupt header: VipsJpeg: premature end of JPEG image')), true);
+  assert.equal(undecodable(new Error('Input buffer has corrupt header:')), true);
+  assert.equal(undecodable(new Error('tiff2vips: Quantization table 0x00 was not defined\ntiff2vips: read error')), true);
+  assert.equal(undecodable(new Error('Could not allocate enough memory for raw output')), false);
+  assert.equal(undecodable(Object.assign(new Error('no space left'), { code: 'ENOSPC' })), false);
+  assert.equal(undecodable(Object.assign(new Error('x'), { status: 507 })), false);
+  assert.equal(undecodable(new Error('something unexpected')), false);
+});
+
+test('a truncated TIFF is undecodable, not retried forever', async (t) => {
+  const tiff = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#bcacac' } })
+    .tiff({ compression: 'jpeg' })
+    .toBuffer();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-tiff-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'cut.tif');
+  fs.writeFileSync(file, tiff.subarray(0, tiff.length - 20));
+  await assert.rejects(normalize(file), (err) => err.status === 415);
+});
+
 test('an album subscription skips a picture it cannot take and imports the rest', async (t) => {
   const image = await sharp({
     create: { width: 140, height: 200, channels: 3, background: '#bcacac' },
@@ -1002,10 +1023,11 @@ test('an album subscription skips a picture it cannot take and imports the rest'
     if (req.url === '/api/server/version')
       res.end(JSON.stringify({ major: 3, minor: 4, patch: 2 }));
     else if (req.url.startsWith('/api/search/'))
-      res.end(JSON.stringify({ assets: { items: [{ id: 'huge', type: 'IMAGE' }, { id: 'bad', type: 'IMAGE' }, { id: 'good', type: 'IMAGE' }], nextCursor: null } }));
+      res.end(JSON.stringify({ assets: { items: [{ id: 'huge', type: 'IMAGE' }, { id: 'bad', type: 'IMAGE' }, { id: 'truncated', type: 'IMAGE' }, { id: 'good', type: 'IMAGE' }], nextCursor: null } }));
     else if (req.url.includes('/original')) {
       res.setHeader('Content-Type', 'image/jpeg');
       if (req.url.includes('/huge/')) res.end(Buffer.alloc(26 * 1024 * 1024));
+      else if (req.url.includes('/truncated/')) res.end(image.subarray(0, Math.floor(image.length / 2)));
       else res.end(req.url.includes('/bad/') ? Buffer.from('not a picture') : image);
     } else if (req.url.startsWith('/api/assets/'))
       res.end(JSON.stringify({ type: 'IMAGE', originalFileName: req.url.includes('/bad') ? 'kaputt.jpg' : 'gut.jpg', fileCreatedAt: '2026-01-01T00:00:00Z' }));
@@ -1024,6 +1046,7 @@ test('an album subscription skips a picture it cannot take and imports the rest'
   assert.ok(manager.s.imported.good);
   assert.ok(manager.s.importSkipped.bad);
   assert.ok(manager.s.importSkipped.huge);
+  assert.ok(manager.s.importSkipped.truncated);
   await manager.pollSubscriptions();
   assert.equal(manager.listInbox().filter((p) => p.source === 'immich').length, 1);
 });

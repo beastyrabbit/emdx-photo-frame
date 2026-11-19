@@ -47,6 +47,15 @@ export function validateCrop(c) {
   return structuredClone(c);
 }
 
+// A corrupt or truncated file can never be taken (415, skipped by subscriptions). Errors
+// with a status or a system code, and memory pressure, stay as they are so they retry.
+export function undecodable(err) {
+  if (!err || err.status || err.code) return false;
+  const message = String(err.message || '');
+  if (/alloc|memory/i.test(message)) return false;
+  return /premature end|corrupt|truncat|unsupported image format|invalid|bad (huffman|header)|vips(jpeg|png|webp|gif|tiff)|[a-z]+2vips: |load: /i.test(message);
+}
+
 /** Decode actual pixels, not just metadata. HEVC uses Debian's libde265-backed converter. */
 export async function normalize(file, maxSide = 5120) {
   if (file instanceof URL) file = fileURLToPath(file);
@@ -138,6 +147,8 @@ export async function normalize(file, maxSide = 5120) {
       sha: hash(input),
       pixelHash: hash(data),
     };
+  } catch (err) {
+    throw undecodable(err) ? fail('Bild konnte nicht dekodiert werden.', 415) : err;
   } finally {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   }
