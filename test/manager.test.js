@@ -994,10 +994,22 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
 test('only corrupt input counts as undecodable; memory pressure and system errors retry', () => {
   assert.equal(undecodable(new Error('Input buffer has corrupt header: VipsJpeg: premature end of JPEG image')), true);
   assert.equal(undecodable(new Error('Input buffer has corrupt header:')), true);
+  assert.equal(undecodable(new Error('tiff2vips: Quantization table 0x00 was not defined\ntiff2vips: read error')), true);
   assert.equal(undecodable(new Error('Could not allocate enough memory for raw output')), false);
   assert.equal(undecodable(Object.assign(new Error('no space left'), { code: 'ENOSPC' })), false);
   assert.equal(undecodable(Object.assign(new Error('x'), { status: 507 })), false);
   assert.equal(undecodable(new Error('something unexpected')), false);
+});
+
+test('a truncated TIFF is undecodable, not retried forever', async (t) => {
+  const tiff = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#bcacac' } })
+    .tiff({ compression: 'jpeg' })
+    .toBuffer();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-tiff-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'cut.tif');
+  fs.writeFileSync(file, tiff.subarray(0, tiff.length - 20));
+  await assert.rejects(normalize(file), (err) => err.status === 415);
 });
 
 test('an album subscription skips a picture it cannot take and imports the rest', async (t) => {

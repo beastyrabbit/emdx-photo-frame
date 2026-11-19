@@ -53,7 +53,7 @@ export function undecodable(err) {
   if (!err || err.status || err.code) return false;
   const message = String(err.message || '');
   if (/alloc|memory/i.test(message)) return false;
-  return /premature end|corrupt|truncat|unsupported image format|invalid|bad (huffman|header)|vips(jpeg|png|webp|gif|tiff)|load: /i.test(message);
+  return /premature end|corrupt|truncat|unsupported image format|invalid|bad (huffman|header)|vips(jpeg|png|webp|gif|tiff)|[a-z]+2vips: |load: /i.test(message);
 }
 
 /** Decode actual pixels, not just metadata. HEVC uses Debian's libde265-backed converter. */
