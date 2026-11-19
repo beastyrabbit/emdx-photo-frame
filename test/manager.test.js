@@ -14,7 +14,7 @@ import { ManagerStore } from '../src/manager/store.js';
 import { Secrets } from '../src/manager/secrets.js';
 import { cadenceClock, cadenceFromCron } from '../src/manager/clock.js';
 import { tcpProbe } from '../src/manager/runtime.js';
-import { normalize, MAX_FILE, MIN_FREE } from '../src/manager/media.js';
+import { normalize, undecodable, MAX_FILE, MIN_FREE } from '../src/manager/media.js';
 import { batteryEstimate } from '../src/manager/status.js';
 import { Immich } from '../src/manager/integrations.js';
 import { createServer } from '../src/server.js';
@@ -989,6 +989,15 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
       manager.getOverview(),
     ]).includes('fixture-key'),
   );
+});
+
+test('only corrupt input counts as undecodable; memory pressure and system errors retry', () => {
+  assert.equal(undecodable(new Error('Input buffer has corrupt header: VipsJpeg: premature end of JPEG image')), true);
+  assert.equal(undecodable(new Error('Input buffer has corrupt header:')), true);
+  assert.equal(undecodable(new Error('Could not allocate enough memory for raw output')), false);
+  assert.equal(undecodable(Object.assign(new Error('no space left'), { code: 'ENOSPC' })), false);
+  assert.equal(undecodable(Object.assign(new Error('x'), { status: 507 })), false);
+  assert.equal(undecodable(new Error('something unexpected')), false);
 });
 
 test('an album subscription skips a picture it cannot take and imports the rest', async (t) => {
