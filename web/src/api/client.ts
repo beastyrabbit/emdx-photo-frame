@@ -43,7 +43,7 @@ export interface PhotoFrameApi {
   updateFrame(id: string, patch: FrameSettingsPatch): Promise<void>
   frameAction(id: string, action: FrameAction): Promise<void>
   addFrame(frame: NewFrame): Promise<{ id: string }>
-  testConnection(ip: string, power: PowerMode): Promise<ConnectionTest>
+  testConnection(ip: string, power: PowerMode, pin?: string | null): Promise<ConnectionTest>
   removeFrame(id: string): Promise<void>
 
   // pending changes
@@ -90,7 +90,7 @@ export interface PhotoFrameApi {
   // Immich
   getImmich(): Promise<ImmichStatus>
   searchImmich(query: ImmichQuery): Promise<ImmichAsset[]>
-  importFromImmich(assetIds: string[]): Promise<void>
+  importFromImmich(assetIds: string[], albums?: string[]): Promise<void>
   subscribeAlbum(albumId: string, on: boolean): Promise<void>
 
   // art catalogue (only used while `HouseSettings.extras.art` is on)

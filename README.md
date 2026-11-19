@@ -2,7 +2,7 @@
 
 ## About this fork
 
-This is a fork of [jdemeul/emdx-photo-frame](https://github.com/jdemeul/emdx-photo-frame), by Jonas Demeulemeester, MIT licensed. Everything from [the upstream description](#what-upstream-does) on is upstream's documentation and still describes how the service works today. This section covers only what differs here: why the fork exists, what it has changed so far, and what it plans to add.
+This is a fork of [jdemeul/emdx-photo-frame](https://github.com/jdemeul/emdx-photo-frame), by Jonas Demeulemeester, MIT licensed. Everything from [the upstream description](#what-upstream-does) on is upstream's documentation. The managed service differs as described here and in the [interface guide](docs/user/interface.md).
 
 ### Why a separate repository
 
@@ -13,7 +13,7 @@ Upstream looks after each frame on its own. Every frame gets its own album, its 
 - **Event mode.** A temporary set of pictures in a fixed order, for example for a birthday, after which the frame goes back to the pool.
 - **Upload from a phone**, and later pictures from Immich.
 
-A clean rewrite would have to port the device handling as well: deep sleep, waking up after a change, the fresh playlist after every change that keeps the EM32DX from getting stuck, restart recovery, and the tests with a fake display. Upstream worked all of that out on a real EM32DX ([findings](docs/findings.md)), and its tests cover it against a fake display. So we keep that part unchanged and add new modules around the picture selection. We also need our own container image for our Kubernetes deployment.
+A clean rewrite would have to port the device handling as well. We reuse upstream's transport, rendering and playlist format, with a new manager for ownership, pending changes and scheduling. Its transport hooks persist a guard before content is sent and prohibit further MDC commands in the same wake. Hardware observations remain in upstream's [findings](docs/findings.md).
 
 We merge upstream changes from the `upstream` remote from time to time. Generic fixes can be offered back.
 
@@ -24,18 +24,18 @@ We merge upstream changes from the `upstream` remote from time to time. Generic 
 | Tests and container image build on pull requests and pushes to `main`; a `vX.Y.Z` tag publishes `ghcr.io/beastyrabbit/emdx-photo-frame:X.Y.Z` ([workflow](.github/workflows/release-image.yaml)) | done, `v1.0.0` (upstream code unchanged) |
 | This section, `AGENTS.md`, lefthook with gitleaks | done |
 | Hardware check of the unchanged upstream: one week of daily changes in deep sleep, then every 48 and 72 hours, with battery readings and photos of the panel | running since 18 November 2026 |
-| Shared pool with no duplicates across frames | planned |
-| Next/now override, delivered when the button wakes the frame | planned |
-| Event mode | planned |
-| Upload from a phone | planned |
-| Change every N days (a cron step such as `*/2` restarts at each month's end) | planned |
-| Immich as a picture source | planned |
-| New web page, phone first: settings change at the frame's next wake or at once after a button press | in progress |
+| Shared pool, group/format decks and shared locks for combined pictures | implemented; local validation, not deployed |
+| Now/next requests and persistent pending changes | implemented; guarded wakes, no retries after content |
+| Events with ordered pictures and normal fallback | implemented; an exhausted offline playlist can repeat an Event |
+| Phone uploads, HEIC decoding, Eingang, crop and albums | implemented |
+| Calendar-day cadence and hourly windows | implemented; existing 06:00–00:00 schedule adopted |
+| Immich 3.4.x copies and album subscriptions, public-domain art | implemented; Immich key needed for use |
+| React web interface and upstream fallback at `/alt` | implemented; cleaning writes still need supervised hardware qualification |
 | Samsung "Custom App" content source (our own app on the frame) | tested 19 November 2026 and shelved: the frame installs only Samsung-signed packages. Frames on mains power use the normal "Mobile" source with network standby on instead. |
 
-The planned items wait for the hardware check and for a written extension design. Their exact shape may still change.
+The new manager adopts the existing frame, photos and delivered playlist on first start. Back up the entire data volume before upgrading. Keep `/data/manager` and its encryption key with that backup. See the [interface guide](docs/user/interface.md) for runtime settings and limitations.
 
-### How the planned flow differs
+### How the managed flow differs
 
 Upstream today, per frame: an album or folder feeds that frame's shuffle round, the service renders the next days and sends them as the display's own playlist, the display changes the picture by itself, and right after each change, while it is briefly online, it gets a fresh playlist.
 

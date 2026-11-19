@@ -82,7 +82,7 @@ export function transferNote(change: PendingState | null, immediate: boolean): s
   if (change === "uebertragen") return "übertragen, noch nicht bestätigt"
   if (change === "abweichend") return "der Rahmen meldet etwas anderes"
   if (change === "eingestellt" || change === "wartet") return immediate ? "geht gerade raus" : "wartet auf den Rahmen"
-  return "am Rahmen bestätigt"
+  return change === "bestaetigt" ? "am Rahmen bestätigt" : "liegt am Rahmen bereit"
 }
 
 export const pendingCountText = (n: number) => plural(n, "Änderung wartet", "Änderungen warten")

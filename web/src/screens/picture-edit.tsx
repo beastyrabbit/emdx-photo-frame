@@ -77,6 +77,10 @@ function CropEditor({
             if (p.x !== 0 || p.y !== 0) onChange({ ...crop, x: 50 + p.x / 10, y: 50 + p.y / 10, auto: false })
           }}
           onZoomChange={(zoom) => onChange({ ...crop, zoom, auto: false })}
+          onCropComplete={(area) => {
+            const rect = { x: area.x / 100, y: area.y / 100, width: area.width / 100, height: area.height / 100 }
+            if (!crop.auto && JSON.stringify(crop.rect) !== JSON.stringify(rect)) onChange({ ...crop, rect })
+          }}
           style={{ cropAreaStyle: { border: "3px solid var(--bezel)", outline: "1px solid rgb(255 255 255 / 0.7)", color: "rgb(10 12 11 / 0.6)" } }}
         />
       </div>
@@ -100,7 +104,9 @@ function CropEditor({
         </Button>
       </div>
       <p className="text-small text-ink-soft">
-        {crop.auto ? "Das ist der automatische Vorschlag. Er achtet darauf, dass keine Gesichter abgeschnitten werden." : "Dein eigener Zuschnitt."}{" "}
+        {crop.auto
+          ? "Automatischer Zuschnitt: Beim Vorbereiten achtet der Server auf Gesichter. Dieses Fenster zeigt zunächst die Bildmitte."
+          : "Dein eigener Zuschnitt."}{" "}
         <span id={helpId}>
           Das Fenster hat die Form des Rahmens. Verschieb das Bild darunter mit dem Finger, der Maus oder den Pfeiltasten und vergrößere es mit zwei Fingern
           oder dem Regler.

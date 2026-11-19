@@ -26,6 +26,7 @@ export function everyText(everyMin: number): string {
 
 /** "stündlich", "täglich um 07:00", "alle 2 Tage um 06:00". */
 export function cadenceText(c: Cadence): string {
+  if (c.until) return `${everyText(c.everyMin)} von ${c.at} bis ${c.until}`
   return c.everyMin >= 720 ? `${everyText(c.everyMin)} um ${c.at}` : everyText(c.everyMin)
 }
 

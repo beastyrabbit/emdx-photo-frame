@@ -1,10 +1,17 @@
 # emdx-photo-frame — runs on a Synology NAS via Container Manager (tested on a DS420+),
 # or anywhere with Docker (arm64 Macs included).
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build && npm run check
+
 FROM node:22-bookworm-slim
 
 # Fonts for the labels of the test pattern and under the artworks; tzdata so TZ works for the schedule.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends fonts-dejavu-core tzdata \
+ && apt-get install -y --no-install-recommends fonts-dejavu-core tzdata libheif-examples libde265-0 util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
@@ -20,6 +27,7 @@ RUN npm ci --omit=dev && npm cache clean --force \
       ! -name 'ort.node.min.*js' ! -name 'ort-wasm-simd-threaded.mjs' ! -name 'ort-wasm-simd-threaded.wasm' -delete
 COPY src ./src
 COPY models ./models
+COPY --from=web-build /web/dist ./web/dist
 
 VOLUME /data
 # The web page and what the display downloads.

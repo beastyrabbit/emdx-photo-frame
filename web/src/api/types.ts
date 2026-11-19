@@ -9,6 +9,8 @@ export type HealthLevel = "ok" | "warn" | "bad"
 export interface Cadence {
   everyMin: number
   at: string
+  /** Last daily change, inclusive; earlier than `at` means after midnight. */
+  until?: string
 }
 
 /**
@@ -178,6 +180,7 @@ export type PendingKind =
 export type PendingState = "eingestellt" | "wartet" | "uebertragen" | "bestaetigt" | "abweichend"
 
 export interface PendingChange {
+  verification?: string
   id: string
   frameId: string
   kind: PendingKind
@@ -209,6 +212,8 @@ export type Hint = "zu-klein" | "unscharf" | "doppelt"
 export interface Art {
   motif: string
   variant: number
+  url?: string
+  originalUrl?: string
 }
 
 export interface Crop {
@@ -217,6 +222,8 @@ export interface Crop {
   y: number
   zoom: number
   auto: boolean
+  /** Normalized upright crop returned by the editor. */
+  rect?: { x: number; y: number; width: number; height: number }
 }
 
 export interface Picture {
@@ -427,6 +434,9 @@ export interface HistoryEntry {
 }
 
 export interface HouseSettings {
+  localSecretsKey?: boolean
+  immichUrl?: string
+  immichUrlLocked?: boolean
   autoAccept: boolean
   /** Further picture sources. `art` switches the art catalogue on: the "Kunst" area and "Kunst untermischen". */
   extras: { generate: boolean; art: boolean }

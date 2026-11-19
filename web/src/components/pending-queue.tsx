@@ -142,6 +142,7 @@ function ChangeRow({ change, showFrame }: { change: PendingChange; showFrame?: s
             {!change.from && change.to && <span>: {change.to}</span>}
           </div>
           <ConfirmMark state={change.state} at={stateAt} />
+          {change.verification && <p className="text-small text-ink-soft">{change.verification}</p>}
           {change.state === "abweichend" && (
             <p className="text-[15px]">
               Der Rahmen meldet <strong>{change.deviceValue}</strong>, eingestellt ist <strong>{change.to}</strong>. Vielleicht wurde es in der Samsung-App

@@ -43,7 +43,7 @@ export function ImmichScreen() {
   }
   const found = useImmichSearch(query)
   const load = useAct(
-    api.importFromImmich,
+    (ids: string[]) => api.importFromImmich(ids, immich.data?.albums.filter((a) => a.id === album).map((a) => a.name) ?? []),
     (_r, ids) => `${plural(ids.length, "Bild", "Bilder")} geholt: ${ids.length === 1 ? "liegt" : "liegen"} jetzt im Eingang`,
   )
   const subscribe = useAct(
@@ -53,7 +53,7 @@ export function ImmichScreen() {
   const toggle = (id: string) => setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
   const fresh = (found.data ?? []).filter((a) => !a.imported)
 
-  if (immich.data && !immich.data.connected) {
+  if (immich.isError || (immich.data && !immich.data.connected)) {
     return (
       <div className="grid gap-6">
         <PageHead title="Aus Immich holen" back={{ to: "/bibliothek", label: "Bibliothek" }} />

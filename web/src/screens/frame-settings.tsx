@@ -30,8 +30,6 @@ import { plural } from "@/lib/format"
 
 /** Rhythm and time of the first change, with what it costs a battery frame. */
 export function CadenceFields({ value, onChange, power }: { value: Cadence; onChange: (c: Cadence) => void; power: PowerMode }) {
-  const perDay = Math.round(((1440 / value.everyMin) * 0.6 + 0.25) * 10) / 10
-  const changesPerDay = 1440 / value.everyMin
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap gap-2">
@@ -51,10 +49,21 @@ export function CadenceFields({ value, onChange, power }: { value: Cadence; onCh
           <span aria-hidden>{value.everyMin >= 720 ? "um" : "erster Wechsel um"}</span>
           <TimeField label={value.everyMin >= 720 ? "Wechsel um" : "Erster Wechsel um"} value={value.at} onChange={(at) => onChange({ ...value, at })} />
         </div>
+        {value.everyMin < 1440 && (
+          <div className="flex flex-wrap items-center gap-2 text-[15px] text-ink-soft">
+            <Switch
+              aria-label="Tägliches Zeitfenster"
+              checked={value.until !== undefined}
+              onCheckedChange={(on) => onChange({ ...value, until: on ? "00:00" : undefined })}
+            />
+            <span>Tägliches Zeitfenster</span>
+            {value.until !== undefined && <TimeField label="Letzter Wechsel um" value={value.until} onChange={(until) => onChange({ ...value, until })} />}
+          </div>
+        )}
       </div>
       <p className="text-small text-ink-soft">
         {power === "akku"
-          ? `${changesPerDay >= 1 ? plural(Math.round(changesPerDay), "Bildaufbau", "Bildaufbauten") : "Ein Bildaufbau alle paar"} ${changesPerDay >= 1 ? "am Tag" : "Tage"}: kostet etwa ${String(perDay).replace(".", ",")} % Akku am Tag. Ein voller Akku hält damit rund ${Math.round(100 / perDay)} Tage.`
+          ? "Planungswert: etwa 1–2,5 % Akku je Bildaufbau. Eine Laufzeit erscheint erst nach genügend gesunden Messungen."
           : "Am Strom spielt der Rhythmus für den Verbrauch keine Rolle."}
       </p>
     </div>

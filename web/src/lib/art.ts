@@ -102,6 +102,7 @@ const cache = new Map<string, string>()
 
 /** A picture as an image URL, in its own shape (width × height). */
 export function artUrl(art: Art, width = 1200, height = 1200): string {
+  if (art.url) return width === 1200 && height === 1200 ? art.url : art.originalUrl || art.url
   const key = `${art.motif}/${art.variant}/${width}x${height}`
   let url = cache.get(key)
   if (!url) {

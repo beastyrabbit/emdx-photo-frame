@@ -511,7 +511,7 @@ function FrameOverview({ f }: { f: FrameDetail }) {
               <p className="text-small text-ink-soft">
                 {neverChanged
                   ? "Geschätzt aus dem eingestellten Rhythmus. Ein eigener Akku-Verlauf entsteht mit den ersten Wechseln."
-                  : "Geschätzt aus dem Akku-Verlauf für den Rhythmus, den der Rahmen bestätigt hat."}{" "}
+                  : "Geschätzt aus dem Akku-Verlauf für den zuletzt übertragenen Rhythmus."}{" "}
                 Jeder Bildaufbau kostet Strom, das Hängen selbst fast nichts.
               </p>
             )}

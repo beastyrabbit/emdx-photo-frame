@@ -1,7 +1,7 @@
 import { Lock } from "lucide-react"
 import { useState } from "react"
 import { api } from "@/api"
-import { useAct, useKeys } from "@/api/hooks"
+import { useAct, useKeys, useSettings } from "@/api/hooks"
 import type { AccessKey } from "@/api/types"
 import { Field, PageHead } from "@/components/bits"
 import { StateMark } from "@/components/marks"
@@ -30,7 +30,13 @@ function KeyCard({ k }: { k: AccessKey }) {
   const [value, setValue] = useState("")
   const [replacing, setReplacing] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
-  const save = useAct(({ id, key }: { id: AccessKey["id"]; key: string }) => api.saveKey(id, key), "Schlüssel gespeichert")
+  const save = useAct(
+    async ({ id, key }: { id: AccessKey["id"]; key: string }) => {
+      await api.saveKey(id, key)
+      return api.testKey(id)
+    },
+    (r) => `Schlüssel gespeichert. ${r.name}: ${STATUS[r.status].text}`,
+  )
   const test = useAct(api.testKey, (r) => (r.status === "funktioniert" ? `${r.name}: funktioniert` : `${r.name}: ${STATUS[r.status].text}`))
   const remove = useAct(api.removeKey, "Schlüssel entfernt")
   const status = STATUS[k.status]
@@ -154,6 +160,9 @@ function KeyCard({ k }: { k: AccessKey }) {
 
 export function AccessKeysScreen() {
   const { data } = useKeys()
+  const settings = useSettings()
+  const [url, setUrl] = useState<string | null>(null)
+  const saveUrl = useAct((immichUrl: string) => api.updateSettings({ immichUrl }), "Immich-Adresse gespeichert")
   return (
     <div className="grid gap-6">
       <PageHead
@@ -161,6 +170,25 @@ export function AccessKeysScreen() {
         back={{ to: "/einstellungen", label: "Einstellungen" }}
         lead="Schlüssel, mit denen sich der Server bei anderen Diensten anmeldet. Einmal gespeichert, ist ein Schlüssel hier nicht mehr lesbar: nur ersetzen oder entfernen."
       />
+      <Field label="Immich-Adresse mit /api" htmlFor="immich-url">
+        <Input
+          id="immich-url"
+          value={url ?? settings.data?.immichUrl ?? ""}
+          disabled={settings.data?.immichUrlLocked}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        {!settings.data?.immichUrlLocked && (
+          <Button variant="outline" disabled={!url || saveUrl.isPending} onClick={() => url && saveUrl.mutate(url)}>
+            Adresse speichern
+          </Button>
+        )}
+      </Field>
+      {settings.data?.localSecretsKey && (
+        <p className="text-small text-ink-soft">
+          Der Verschlüsselungsschlüssel liegt im Datenordner. Sichere ihn zusammen mit den Daten. Ein externer SECRETS_KEY kann ihn bei einer neuen Einrichtung
+          ersetzen.
+        </p>
+      )}
       {!data ? <Skeleton className="h-48 w-full" /> : data.map((k) => <KeyCard key={k.id} k={k} />)}
       <p className="border-t border-line pt-5 text-[15px] text-ink-soft">
         Die Seite selbst hat kein Passwort: im Heimnetz darf sie jeder benutzen. Die Geräte-PIN der Rahmen steht bei jedem Rahmen in dessen Einstellungen.

@@ -42,16 +42,18 @@ export function Meter({ percent, className }: { percent: number; className?: str
 
 /** What a frame runs on, in one line: battery with outlook, charging, or mains power. */
 export function powerLine(frame: Frame): string {
-  if (frame.power === "dauerstrom" || !frame.battery) return "am Strom, immer erreichbar"
-  if (frame.charging) return "lädt gerade, Änderungen gehen sofort raus"
+  if (frame.power === "dauerstrom") return frame.justUpdated ? "am Strom, gerade aktualisiert" : "am Strom, immer erreichbar"
+  if (!frame.battery) return "Akku: noch keine Messung"
+  if (frame.charging) return frame.justUpdated ? "lädt gerade, gerade aktualisiert" : "lädt gerade, Änderungen gehen sofort raus"
   const b = frame.battery
   if (b.changesLeft !== null && b.changesLeft < 10) return `reicht nur noch für etwa ${b.changesLeft} Wechsel`
-  return b.until ? `reicht voraussichtlich bis ${fmtDay(b.until)}` : ""
+  return b.until ? `reicht voraussichtlich bis ${fmtDay(b.until)}` : "Noch zu wenig Daten für die Laufzeit"
 }
 
 export function PowerFigure({ frame, size = "md" }: { frame: Frame; size?: "md" | "lg" }) {
   const big = size === "lg" ? "text-figure" : "text-[32px] leading-none"
-  if (frame.power === "dauerstrom" || !frame.battery) {
+  if (!frame.battery && frame.power !== "dauerstrom") return <span className="text-small text-ink-soft">Akku: noch keine Messung</span>
+  if (frame.power === "dauerstrom") {
     return (
       <div className="flex items-center gap-2">
         <Plug className="size-6 text-ink-soft" aria-hidden />
@@ -59,6 +61,7 @@ export function PowerFigure({ frame, size = "md" }: { frame: Frame; size?: "md" 
       </div>
     )
   }
+  if (!frame.battery) return null
   const level = batteryLevel(frame.battery.percent)
   return (
     <div className="grid gap-1.5">

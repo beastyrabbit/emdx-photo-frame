@@ -65,7 +65,7 @@ export function AddFrameScreen() {
   const [cleaningTouched, setCleaningTouched] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
   const [test, setTest] = useState<ConnectionTest | null>(null)
-  const runTest = useAct((ip: string) => api.testConnection(ip, frame.power))
+  const runTest = useAct((ip: string) => api.testConnection(ip, frame.power, ownPin ? frame.pin : null))
   const add = useAct(api.addFrame, () => `${frame.name} hinzugefügt`)
   const patch = (p: Partial<NewFrame>) =>
     setFrame((f) => {

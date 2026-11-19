@@ -301,6 +301,10 @@ function EventForm({ existing }: { existing?: FrameEvent }) {
                 : `${listDe(frameIds.map((f) => frame(f)?.name ?? ""))} ${frameIds.length === 1 ? "wechselt" : "wechseln"}`}{" "}
               {everyText(draft.everyMin)} das Bild. Danach geht jeder Rahmen von selbst zu seinem normalen Rhythmus und seinen normalen Bildern zurück.
             </p>
+            <p className="text-small text-ink-soft">
+              Die Rückkehr liegt im übertragenen Vorrat. Ist dieser aufgebraucht und der Dienst weiter unerreichbar, kann das Event erneut erscheinen. Der
+              Dienst lädt deshalb bei jedem Wechsel nach.
+            </p>
             {battery.length > 0 && (
               <div className="grid gap-1.5">
                 <strong className="flex items-center gap-2">
@@ -316,7 +320,9 @@ function EventForm({ existing }: { existing?: FrameEvent }) {
                     </li>
                   ))}
                 </ul>
-                <p className="text-small text-ink-soft">Rahmen am Strom kostet das nichts.</p>
+                <p className="text-small text-ink-soft">
+                  Planungswert aus 1–2,5 % je zusätzlichem Bildaufbau, keine gemessene Laufzeit. Für Rahmen am Strom entfällt die Akku-Schätzung.
+                </p>
               </div>
             )}
             {needPress.length > 0 ? (

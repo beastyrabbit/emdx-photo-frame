@@ -152,11 +152,9 @@ export function SettingsScreen() {
         <p className="text-[15px] text-ink-soft">Zwei Extras neben Hochladen und Immich. Für den Alltag sind sie nicht nötig.</p>
         {s && (
           <div className="grid gap-5">
-            <SettingRow
-              title="Bilder aus einem Text erzeugen"
-              text="Du beschreibst ein Bild, ein KI-Dienst zeichnet es. Braucht einen eigenen Schlüssel und kostet pro Bild ein paar Cent."
-            >
+            <SettingRow title="Bilder aus einem Text erzeugen" text="Später verfügbar. Der Schlüssel kann unter Zugänge schon hinterlegt werden.">
               <Switch
+                disabled={import.meta.env.VITE_API !== "mock"}
                 checked={s.extras.generate}
                 onCheckedChange={(v) => update.mutate({ extras: { ...s.extras, generate: v } })}
                 aria-label="Bilder aus einem Text erzeugen"

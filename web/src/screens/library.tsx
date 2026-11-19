@@ -27,6 +27,7 @@ import { Link, useSearchParams } from "react-router"
 import { toast } from "sonner"
 import { api } from "@/api"
 import { useAct, useAlbums, useDiscarded, useDiscardInbox, useGroups, useInbox, usePictures, useSettings } from "@/api/hooks"
+import { uploadPictures } from "@/api/http"
 import { useFrameMap, usePictureMap } from "@/api/lookups"
 import type { Hint as HintKind, InboxItem, Picture } from "@/api/types"
 import { Chip, ChipRow, Empty, Hint, PageHead } from "@/components/bits"
@@ -403,6 +404,12 @@ export function LibraryScreen() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const artOn = useSettings().data?.extras.art ?? false
   const fileInput = useRef<HTMLInputElement>(null)
+  const upload = useAct(uploadPictures, (result) => {
+    const errors = result.results.filter((item) => item.error)
+    for (const item of errors) toast.error(`${item.name}: ${item.error}`)
+    const n = result.results.length - errors.length
+    return n ? `${plural(n, "Bild liegt", "Bilder liegen")} jetzt im Eingang` : undefined
+  })
 
   const update = useAct(
     ({ ids, paused }: { ids: string[]; paused: boolean }) => Promise.all(ids.map((id) => api.updatePicture(id, { paused }))),
@@ -446,18 +453,17 @@ export function LibraryScreen() {
         <input
           ref={fileInput}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif,image/tiff,image/gif,.heic,.heif"
           multiple
           className="sr-only"
           tabIndex={-1}
           aria-hidden
           onChange={(e) => {
-            const n = e.target.files?.length ?? 0
-            if (n) toast.info(`Im Prototyp werden keine Dateien gespeichert. ${plural(n, "Bild würde", "Bilder würden")} jetzt im Eingang landen.`)
+            if (e.target.files?.length) upload.mutate(Array.from(e.target.files))
             e.target.value = ""
           }}
         />
-        <Button variant="outline" onClick={() => fileInput.current?.click()}>
+        <Button variant="outline" disabled={upload.isPending} onClick={() => fileInput.current?.click()}>
           <Upload />
           Hochladen
         </Button>

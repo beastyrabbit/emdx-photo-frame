@@ -133,7 +133,7 @@ export function FrameTimeline({ frame }: { frame: Frame }) {
             </li>
           )}
           {fixed.map((i) => (
-            <li key={i.pictureId} className="flex items-center gap-1 border-t border-line py-2 last:border-b">
+            <li key={`${i.pictureId}:${i.at}`} className="flex items-center gap-1 border-t border-line py-2 last:border-b">
               <span className="grid h-11 w-8 shrink-0 place-items-center text-ink-soft" title="Fest: liegt schon am Rahmen">
                 {i.state === "haengt" ? <span className="size-2.5 rounded-full bg-green" aria-hidden /> : <Lock className="size-4" aria-label="fest" />}
               </span>
