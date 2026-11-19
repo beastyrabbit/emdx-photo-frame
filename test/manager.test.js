@@ -1048,6 +1048,89 @@ test('S5 timeline reorder cannot override Event assignments', async (t) => {
   assert.deepEqual(frame.prepared.entries.filter((e) => e.eventId === event.id).map((e) => e.pictureId), ids.slice(0, 2));
 });
 
+test('N1 global reorder retains its allocations across preparations and the scheduled wake', async (t) => {
+  const { manager, frame } = await setup(t);
+  await manager.prepare(frame);
+  const original = frame.prepared.entries;
+  frame.current = { pictureId: original[0].pictureId, since: original[0].at };
+  frame.delivered = { id: frame.prepared.id, builtAt: original[0].at, entries: original.map((e, i) => ({
+    ...e, durationMs: (original[i + 1]?.at || manager.clock(frame).next(e.at)) - e.at,
+  })) };
+  const movable = manager.getDeck('default', 'hoch').cards.find((c) => !c.locked && !c.frameId);
+  assert.ok(movable);
+  manager.moveDeckCard('default', 'hoch', movable.pictureId, 0);
+  await manager.prepare(frame);
+  const allocated = frame.prepared.entries.slice(2).map((e) => ({ at: e.at, pictureId: e.pictureId }));
+  assert.equal(allocated[0].pictureId, movable.pictureId);
+  await manager.prepare(frame);
+  assert.deepEqual(frame.prepared.entries.slice(2).map((e) => ({ at: e.at, pictureId: e.pictureId })), allocated);
+  const now = original[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
+  await manager.prepare(frame);
+  for (const entry of allocated)
+    assert.equal(frame.prepared.entries.find((e) => e.at === entry.at)?.pictureId, entry.pictureId);
+  const next = manager.getDeck('default', 'hoch').cards.find((c) => !c.locked && !c.frameId);
+  assert.ok(next);
+  manager.moveDeckCard('default', 'hoch', next.pictureId, 0);
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries[2].pictureId, next.pictureId);
+});
+
+test('N2 refill excludes deleted and paused future manual pictures', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake });
+  await serving(t, manager);
+  const ids = manager.listPictures().slice(0, 4).map((p) => p.id);
+  manager.show({ pictureIds: ids, scope: { frameId: frame.id }, when: 'jetzt', force: true });
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), true);
+  assert.deepEqual(frame.delivered.entries.filter((e) => !e.tail).map((e) => e.pictureId), ids);
+  manager.deletePicture(ids[2]);
+  manager.updatePicture(ids[3], { paused: true });
+  const now = frame.delivered.entries[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
+  await manager.prepare(frame);
+  assert.equal(frame.prepared.entries[0].pictureId, ids[1]);
+  assert.ok(frame.prepared.entries.slice(1).every((e) => !ids.slice(2).includes(e.pictureId)));
+  assert.equal(await manager.deliver(frame), true);
+  assert.ok(frame.delivered.entries.every((e) => !ids.slice(2).includes(e.pictureId)));
+  assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
+});
+
+test('N3 forced shared picture keeps authorization through shortage fallback and refill', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake, count: 1 });
+  await serving(t, manager);
+  const pid = manager.listPictures()[0].id;
+  const other = manager.addFrame({
+    name: 'Zweiter', device: 'Frame 2', ip: '127.0.0.2', orientation: 'hoch', upsideDown: false,
+    power: 'akku', cadence: frame.cadence, cleaning: '05:50', buffer: 3, groupId: 'default', pin: null,
+  });
+  manager.reserve(pid, other.id);
+  manager.show({ pictureIds: [pid], scope: { frameId: frame.id }, when: 'jetzt', force: true });
+  await manager.prepare(frame);
+  assert.equal(await manager.deliver(frame), true);
+  assert.ok(frame.delivered.entries.every((e) => e.pictureId === pid && e.force));
+  assert.equal(fake.events.filter((e) => e === 'cmd:c7').length, 1);
+  assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
+  assert.equal(await manager.deliver(frame), false);
+  const now = frame.delivered.entries[1].at + 1;
+  t.mock.method(Date, 'now', () => now);
+  await manager.prepare(frame);
+  assert.ok(frame.prepared.entries.every((e) => e.pictureId === pid && e.force));
+  assert.equal(await manager.deliver(frame), true);
+  assert.equal(fake.events.filter((e) => e === 'cmd:c7').length, 2);
+  assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
+  // Ownership checks still reject the same entries without explicit authorization.
+  frame.guard = null;
+  await manager.prepare(frame);
+  for (const entry of frame.prepared.entries) entry.force = false;
+  assert.equal(await manager.deliver(frame), false);
+  assert.equal(fake.events.filter((e) => e === 'cmd:c7').length, 2);
+});
+
 test('S6 an Event outside compilation limits is rejected without blocking normal refills', async (t) => {
   const { manager, frame } = await setup(t);
   const before = structuredClone(manager.s.claims);

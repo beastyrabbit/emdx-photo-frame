@@ -174,12 +174,19 @@ export class Runtime {
         const old = (f.delivered?.entries || []).find(
           (e) => e.at === at && e.at > now && e.changeId && !e.tail,
         );
-        if (old) chosen = old;
+        if (
+          old && this.s.pictures.some(
+            (p) => p.id === old.pictureId && p.status === 'accepted' && !p.paused,
+          )
+        ) chosen = old;
       }
-      if (!chosen && !(reorderChange?.payload.deck && at >= reorderAt)) {
+      if (!chosen) {
         const old = (f.plan || []).find((e) => e.at === at && !e.changeId);
         if (
           old &&
+          // A deck reorder reallocates once; repeated preparation keeps that request's slots.
+          (!(reorderChange?.payload.deck && at >= reorderAt) ||
+            old.reorderId === reorderChange.id) &&
           this.s.pictures.some(
             (p) =>
               p.id === old.pictureId && p.status === 'accepted' && !p.paused,
@@ -194,21 +201,22 @@ export class Runtime {
         if (pid) chosen = { pictureId: pid };
       }
       if (!chosen && !entries.length) {
-        const pid = pending.find((p) =>
+        const change = pending.find((p) =>
           ['zeigen-jetzt', 'zeigen-naechstes'].includes(p.kind),
-        )?.payload.pictureIds[0];
-        if (pid) chosen = { pictureId: pid, preserve: true };
+        );
+        const pid = change?.payload.pictureIds[0];
+        if (pid) chosen = { pictureId: pid, preserve: true, force: change.payload.force === true };
       }
       if (!chosen && entries.length) {
         f.shortage++;
         const fallback = event
           ? entries.at(-1)
           : entries.findLast((e) => !e.eventId && e.pictureId);
+        const source = fallback?.pictureId ? fallback
+          : f.current?.pictureId ? f.current : entries.at(-1);
         chosen = {
-          pictureId:
-            fallback?.pictureId ||
-            f.current?.pictureId ||
-            entries.at(-1).pictureId,
+          pictureId: source.pictureId,
+          force: source.force,
           preserve: true,
         };
       }
@@ -223,6 +231,8 @@ export class Runtime {
         at,
         eventId: event?.id || null,
         changeId: chosen.changeId || null,
+        reorderId: !event && reorderChange?.payload.deck && at >= reorderAt
+          ? reorderChange.id : null,
         force: !!chosen.force,
         pinned: !!chosen.changeId,
         file: path.join(dir, `${entries.length}.png`),
