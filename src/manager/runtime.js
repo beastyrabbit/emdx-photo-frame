@@ -872,7 +872,17 @@ export class Runtime {
     }
     // Render ahead, without consuming the short wake window. Already-ready legacy slots survive migration.
     if (!f.prepared || f.dirty) {
-      await this.prepare(f);
+      try {
+        await this.prepare(f);
+      } catch (err) {
+        if (!f.prepared) throw err;
+        // A failed rebuild must not waste a wake when prepared files are still available.
+        f.preparing = null;
+        f.dirty = true;
+        f.prepareError = err.status
+          ? err.message
+          : 'Bilder konnten nicht neu vorbereitet werden. Vorhandener Vorrat wird weiterverwendet.';
+      }
       if (!f.prepared) return;
     }
     f.lastProbe = now;

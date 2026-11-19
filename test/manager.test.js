@@ -213,6 +213,60 @@ test('H1: tick releases the shared reserve for legacy state before delivering pr
   assert.equal(fake.events.filter((e) => e.startsWith('cmd:')).at(-1), 'cmd:c7');
 });
 
+test('H1: tick delivers the existing prepared program when rebuilding runs out of space after reserve release', async (t) => {
+  const fake = await startFakeEmdx();
+  t.after(() => fake.close());
+  const { manager, frame } = await setup(t, { fake, count: 4 });
+  const server = createServer(manager.base, [...manager.apps.values()], { manager });
+  await server.listen();
+  t.after(() => server.close());
+  manager.server = server;
+  manager.quiet = () => false;
+  await manager.prepare(frame);
+  const prepared = frame.prepared;
+  const images = new Map(prepared.entries.map((entry) => [entry.file, fs.readFileSync(entry.file)]));
+  frame.lastDue = 0;
+  const write = fs.writeSync;
+  let failures = 0;
+  t.mock.method(fs, 'writeSync', (...args) => {
+    if (fs.existsSync(manager.store.reserve)) {
+      failures++;
+      throw Object.assign(new Error('PVC full'), { code: 'ENOSPC' });
+    }
+    return write(...args);
+  });
+  const render = t.mock.method(manager, 'renderPicture', async () => {
+    assert.equal(fs.existsSync(manager.store.reserve), false);
+    assert.equal(frame.dirty, true);
+    assert.equal(frame.prepared, prepared);
+    throw Object.assign(new Error('Render failed: PVC full'), { code: 'ENOSPC' });
+  });
+  await manager.tick(frame);
+  assert.equal(failures, 1);
+  assert.equal(render.mock.callCount(), 1);
+  assert.equal(frame.delivered.id, prepared.id);
+  assert.equal(frame.delivered.state, 'downloaded');
+  assert.equal(frame.dirty, true);
+  assert.equal(frame.preparing, null);
+  const persisted = JSON.parse(fs.readFileSync(manager.store.file)).frames[0];
+  assert.ok(persisted.guard);
+  assert.equal(persisted.prepareError, frame.prepareError);
+  assert.equal(manager.getFrame(frame.id).health.level, 'warn');
+  assert.match(manager.getFrame(frame.id).health.text, /vorbereitet/);
+  assert.equal(fake.received.length, 1);
+  for (const [i, entry] of frame.delivered.entries.entries())
+    assert.deepEqual(fake.received[0].images[i], images.get(entry.file));
+  const commands = fake.events.filter((e) => e.startsWith('cmd:'));
+  assert.equal(commands.filter((e) => e === 'cmd:c7').length, 1);
+  assert.equal(commands.at(-1), 'cmd:c7');
+  await manager.tick(frame);
+  assert.deepEqual(fake.events.filter((e) => e.startsWith('cmd:')), commands);
+  render.mock.restore();
+  await manager.prepare(frame);
+  assert.equal(frame.prepareError, null);
+  assert.equal(frame.dirty, false);
+});
+
 test('release #2: bounded JPEGs and subscription batches, low-space refusal, and prepared delivery survives ENOSPC', async (t) => {
   const fake = await startFakeEmdx();
   t.after(() => fake.close());
