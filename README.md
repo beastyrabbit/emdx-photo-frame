@@ -24,7 +24,7 @@ We merge upstream changes from the `upstream` remote from time to time. Generic 
 | Tests and container image build on pull requests and pushes to `main`; a `vX.Y.Z` tag publishes `ghcr.io/beastyrabbit/emdx-photo-frame:X.Y.Z` ([workflow](.github/workflows/release-image.yaml)) | done, `v1.0.0` (upstream code unchanged) |
 | This section, `AGENTS.md`, lefthook with gitleaks | done |
 | Hardware check of the unchanged upstream: one week of daily changes in deep sleep, then every 48 and 72 hours, with battery readings and photos of the panel | running since 18 November 2026 |
-| Shared pool, group/format decks and shared locks for combined pictures | implemented; local validation, not deployed |
+| Shared pool, group/format decks and shared locks for combined pictures | implemented |
 | Now/next requests and persistent pending changes | implemented; guarded wakes, no retries after content |
 | Events with ordered pictures and normal fallback | implemented; an exhausted offline playlist can repeat an Event |
 | Phone uploads, HEIC decoding, Eingang, crop and albums | implemented |

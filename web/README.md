@@ -1,6 +1,6 @@
 # Bilderrahmen: web interface
 
-The new interface for the emdx-photo-frame service ("Sechs Tinten"). Right now it is a clickable prototype: every screen works, all data comes from an in-memory mock. It is built in the real stack so it can become the real frontend by replacing the mock.
+The interface of the emdx-photo-frame service ("Sechs Tinten"). The service builds it into its image and serves it at `/` (the upstream page stays at `/alt`). All data comes from the service's `/api/v1` endpoints; the in-memory mock from the prototype stays available for design work with `VITE_API=mock`.
 
 React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui, dnd-kit, Motion, TanStack Query, React Router, Biome.
 
@@ -9,8 +9,10 @@ React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui, dnd-kit, Motion, TanStack
 ```sh
 cd web
 npm install
-npm run dev        # http://127.0.0.1:5183, this machine only
+VITE_API=mock npm run dev   # http://127.0.0.1:5183 on mock data, this machine only
 ```
+
+Without `VITE_API=mock` the page talks to the service on the same origin: build it (`npm run build`) and run the service (`npm start` in the repository root), which serves `web/dist`. `VITE_HASH_ROUTER=1` builds a static copy whose addresses work from any path (after `#`), for sharing a mock preview.
 
 | Command           | What it does                              |
 | ----------------- | ----------------------------------------- |
@@ -20,9 +22,9 @@ npm run dev        # http://127.0.0.1:5183, this machine only
 | `npm run check`   | Biome lint and format check               |
 | `npm run format`  | Biome, fixing what it can                 |
 
-The page makes no network requests. Fonts (Nunito Sans, Barlow Condensed) are bundled from npm, pictures are drawn in code.
+The page loads nothing from the internet. Fonts (Nunito Sans, Barlow Condensed) are bundled from npm.
 
-The prototype always runs on **Thursday 19 Nov 2026, 09:30** and moves on in real time from there (`src/lib/clock.ts`), so the mock house tells the same story on every start. Reloading the page resets all data.
+With `VITE_API=mock` the page always starts on **Thursday 19 Nov 2026, 09:30** and moves on in real time from there (`src/lib/clock.ts`), so the mock house tells the same story on every start. Reloading the page resets all mock data.
 
 Add `?darstellung=dunkel` or `?darstellung=hell` to any address to force dark or light mode; the choice is otherwise under Einstellungen → Darstellung.
 
@@ -34,21 +36,12 @@ Everything the interface knows comes through one typed object:
 | ------------------- | -------------------------------------------------------------------------- |
 | `src/api/types.ts`  | The data shapes (frames, pending changes, pictures, decks, Events …)       |
 | `src/api/client.ts` | `PhotoFrameApi`: every call the interface makes                            |
-| `src/api/index.ts`  | **The seam.** Exports `api`. Today `api = mockApi`                         |
+| `src/api/index.ts`  | **The seam.** Exports `api`: the HTTP client, or the mock with `VITE_API=mock` |
+| `src/api/http.ts`   | The client for the service's `/api/v1` endpoints (`src/manager/http.js`)   |
 | `src/api/mock/`     | In-memory implementation: `seed.ts` is the house, `index.ts` the behaviour |
 | `src/api/hooks.ts`  | TanStack Query hooks around `api`; screens use only these                  |
 
-To connect the real backend, write an object with the same methods (say `src/api/http.ts`) and export it from `src/api/index.ts`. It can move over one endpoint at a time:
-
-```ts
-export const api: PhotoFrameApi = { ...mockApi, getOverview: http.getOverview }
-```
-
-Then:
-
-- set `prototype` in `src/api/index.ts` to `null`: that removes the "Knopf drücken" stand-in on the frame page;
-- replace `now()` in `src/lib/clock.ts` with `Date.now()`;
-- replace `artUrl()` (`src/lib/art.ts`, used in `src/components/picture.tsx` and the crop editor) with real image URLs. `Art` in `types.ts` then becomes a URL.
+A change to the contract touches `types.ts`, `client.ts`, `http.ts`, the mock and the backend in `src/manager/` together. Only the mock shows the "Knopf drücken" stand-in on the frame page.
 
 Sentences that tell the owner what will happen and when are built in `src/lib/explain.ts` from data the API returns (`Frame.nextOnline`, `ShowPlan`, `EventEstimate`). The backend should return those shapes rather than ready-made text.
 
