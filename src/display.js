@@ -89,6 +89,7 @@ export async function sendWakeOnLan(cfg) {
 // passed. `quiet`: progress at debug level (the caller reports the outcome). The device gets
 // `waitedSec`: how long it took to answer, when it needed more than one try.
 async function connect(cfg, { windowSec = 0, quiet = false, wol = true } = {}) {
+  cfg.transportGuard?.assert();
   const d = cfg.display;
   if (!d.host) throw new Error('EMDX_HOST is not set');
   const start = Date.now();
@@ -151,6 +152,7 @@ export async function probeDisplay(cfg) {
 // networkState()).
 // With `cleaning`, also read the time of its daily panel cleaning (see readCleaning()).
 export async function lookForDisplay(cfg, { battery: readBattery = false, cleaning: readCleaningTime = false } = {}) {
+  cfg.transportGuard?.assert();
   const d = cfg.display;
   const device = new Device({ host: d.host, port: d.port, pin: d.pin });
   try {
@@ -260,15 +262,16 @@ export function pushToDisplay(cfg, server, png, opts = {}) {
 // sleeps the way it is set. `connect`: options for finding the display (see connect()).
 // Waits until the display has fetched every image. Returns { battery, waitedSec, content }
 // (`content`: what the NAS served, to serve it again after a restart).
-export async function pushContent(cfg, server, content, { networkStandby = null, connect: connectOpts = {} } = {}) {
+export async function pushContent(cfg, server, content, { networkStandby = null, connect: connectOpts = {}, beforeSend, onRegistered } = {}) {
   const d = cfg.display;
   const push = server.registerContent(content);
+  onRegistered?.(push.saved());
   const what = push.count === 1 ? 'the image' : `all ${push.count} images`;
   let battery = null;
   let waitedSec = null;
   let ackTimedOut = null;
   try {
-    for (let attempt = 1; attempt <= d.pushAttempts; attempt++) {
+    for (let attempt = 1; attempt <= (cfg.transportGuard ? 1 : d.pushAttempts); attempt++) {
       ackTimedOut = null;
       const device = await connect(cfg, attempt === 1 ? connectOpts : {});
       if (attempt === 1) waitedSec = device.waitedSec ?? null;
@@ -287,7 +290,10 @@ export async function pushContent(cfg, server, content, { networkStandby = null,
           }
           await sleep(300);
         }
+        await beforeSend?.(device, battery);
         log.info(`Asking the display to download ${push.contentUrl}`);
+        // Persist before the command: a dropped ACK does not mean content was refused.
+        cfg.transportGuard?.beforeContent();
         try {
           await withTimeout(device.setContentDownload({ url: push.contentUrl }), (d.contentAckSec ?? 15) * 1000, 'Sending the content URL');
         } catch (err) {
@@ -320,6 +326,21 @@ export async function pushContent(cfg, server, content, { networkStandby = null,
     `The display accepted the command but never downloaded ${push.imageUrl}. `
       + 'Check that it can reach this NAS on that address (SERVER_HOST, HTTP_PORT, NAS firewall).',
   );
+}
+
+// Only used by the coordinator's pre-content preflight, under the frame lock.
+export async function writeCleaning(device, hour, minute) {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) throw new Error('Invalid cleaning time');
+  await sleep(300);
+  await cmd(device, CMD_PANEL, [0xb0, 0x80, 0x02, hour, minute], 'Setting panel cleaning time');
+  await sleep(300);
+  const raw = await cmd(device, CMD_PANEL, [0xb0], 'Verifying panel cleaning time');
+  const bytes = [...raw];
+  const setting = bytes.indexOf(0x80);
+  const next = bytes.indexOf(0x81);
+  const persistent = setting >= 0 ? { hour: bytes[setting + 2], minute: bytes[setting + 3] } : null;
+  const nextRun = next >= 0 ? { hour: bytes[next + 2], minute: bytes[next + 3] } : null;
+  return { value: parseCleaning(raw), matches: !!persistent && persistent.hour === hour && persistent.minute === minute && (!nextRun || nextRun.hour === hour && nextRun.minute === minute) };
 }
 
 // Put the display to sleep: network standby on (standby, so that Wake-on-LAN can wake it; if
@@ -363,8 +384,8 @@ export async function putToSleep(cfg, { networkStandby = true } = {}) {
 // its Sleep button ("the device will enter deep sleep mode"), 0x11 00. The app has no other
 // command for deep sleep. Wakes a display in a light sleep with Wake-on-LAN first.
 // `unlessCharging`: send nothing if it is on the charger. Returns { battery, sleepAfter, charging }.
-export async function deepSleepNow(cfg, { unlessCharging = false } = {}) {
-  const device = await connect(cfg, { quiet: true });
+export async function deepSleepNow(cfg, { unlessCharging = false, connect: connectOpts = {} } = {}) {
+  const device = await connect(cfg, { quiet: true, ...connectOpts });
   let battery = null;
   let sleepAfter = null;
   try {
@@ -420,8 +441,8 @@ export function formatSleepAfter(bytes) {
 }
 
 // "Check display": name, firmware, battery and settings.
-export async function readDisplayInfo(cfg) {
-  const device = await connect(cfg);
+export async function readDisplayInfo(cfg, { device: existing = null } = {}) {
+  const device = existing || await connect(cfg);
   try {
     const info = {};
     const onOff = (v) => (v ? 'on' : 'off');
@@ -449,6 +470,6 @@ export async function readDisplayInfo(cfg) {
     }
     return info;
   } finally {
-    await close(device);
+    if (!existing) await close(device);
   }
 }

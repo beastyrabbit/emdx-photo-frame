@@ -101,6 +101,7 @@ export async function startFakeEmdx({ pin = '123456', battery = 87, fetchImage =
       }
       if (cmd === 0xc7 && sub === 0x54) return reply(sock, id, cmd, [0x54]); // (a thumbnail request: like the EM32DX, it sends nothing)
       if (cmd === 0x1b && payload[0] === 0xb0) {
+        if (payload[1] === 0x80 && payload[2] === 0x02 && payload.length === 5 && !state.refuseCleaningWrite) state.cleaning = [payload[3], payload[4]];
         if (!state.cleaning) return reply(sock, id, cmd, [0xb0], false);
         const d = new Date(Date.now() + 86400000);
         return reply(sock, id, cmd, [0xb0, 0x80, 0x02, ...state.cleaning, 0x81, 0x04, ...state.cleaning, d.getDate(), d.getMonth() + 1]); // (like the EM32DX)
