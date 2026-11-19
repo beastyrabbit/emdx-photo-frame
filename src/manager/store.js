@@ -10,14 +10,14 @@ export const fail = (message, status = 400) =>
 export function atomicJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${id()}.tmp`;
-  const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
-    fs.writeFileSync(fd, JSON.stringify(value));
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  try {
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(value));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
     fs.renameSync(tmp, file);
     const dir = fs.openSync(path.dirname(file), 'r');
@@ -35,6 +35,7 @@ export class ManagerStore {
   constructor(root) {
     this.root = root;
     this.file = path.join(root, 'state.json');
+    this.reserve = path.join(root, '.state-reserve');
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
     if (fs.existsSync(this.file)) {
       try {
@@ -77,9 +78,27 @@ export class ManagerStore {
         keyTests: {},
       };
     }
+    // Real allocated blocks, reserved for durable wake guards when the PVC fills.
+    if (!fs.existsSync(this.reserve)) {
+      try {
+        fs.writeFileSync(this.reserve, Buffer.alloc(16 * 1024 * 1024), { mode: 0o600, flush: true });
+      } catch (err) {
+        fs.rmSync(this.reserve, { force: true });
+        if (err.code !== 'ENOSPC') throw err;
+      }
+    }
   }
   save() {
     this.state.revision++;
-    atomicJson(this.file, this.state);
+    this.withReserve(() => atomicJson(this.file, this.state));
+  }
+  withReserve(save) {
+    try {
+      save();
+    } catch (err) {
+      if (err.code !== 'ENOSPC' || !fs.existsSync(this.reserve)) throw err;
+      fs.unlinkSync(this.reserve);
+      save();
+    }
   }
 }

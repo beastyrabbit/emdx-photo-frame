@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { log, stamp } from './log.js';
 import { UI_HTML } from './ui.js';
 import { managerHttp } from './manager/http.js';
+import { trustedHost } from './manager/hosts.js';
 
 const MAX_PUSHES = 6;
 const EPD_CONTENT_DIR = '/home/owner/content/Downloads/vxtplayer/epaper/mobile/contents';
@@ -246,6 +247,16 @@ export function createServer(cfg, frames, { manager = null } = {}) {
     if (p.endsWith('/content-transfer-progress') && req.method === 'POST') return receiveProgress(req, res, note);
 
     if (p === '/healthz') { res.writeHead(200).end('ok'); return; }
+
+    if (!trustedHost(req.headers.host, cfg.server, manager?.env)) {
+      res.writeHead(403).end('Host not allowed');
+      return;
+    }
+
+    if (manager && !manager.ready) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '5' }).end(JSON.stringify({ error: 'Bilder werden übernommen. Bitte kurz warten.' }));
+      return;
+    }
 
     // Anything else the display asks for: note it (it may tell us more about the protocol).
     if (fromDisplay && !req.headers.authorization) log.info(`Display requested ${req.method} ${req.url}`);

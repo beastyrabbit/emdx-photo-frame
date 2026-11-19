@@ -15,6 +15,7 @@ sharp.cache({ memory: 32, files: 16, items: 64 });
 sharp.concurrency(1);
 const exec = promisify(execFile);
 export const MAX_FILE = 25 * 1024 * 1024;
+export const MIN_FREE = 256 * 1024 * 1024;
 const MAX_PIXELS = 80e6;
 export const autoCrop = () => ({ x: 50, y: 50, zoom: 1, auto: true });
 const hash = (b) => crypto.createHash('sha256').update(b).digest('hex');
@@ -47,7 +48,7 @@ export function validateCrop(c) {
 }
 
 /** Decode actual pixels, not just metadata. HEVC uses Debian's libde265-backed converter. */
-export async function normalize(file) {
+export async function normalize(file, maxSide = 5120) {
   if (file instanceof URL) file = fileURLToPath(file);
   if (fs.statSync(file).size > MAX_FILE)
     throw fail('Bild ist größer als 25 MiB', 413);
@@ -92,7 +93,7 @@ export async function normalize(file) {
         await exec(
           'prlimit',
           [
-            '--as=805306368',
+            '--as=402653184',
             '--fsize=335544320',
             '--cpu=25',
             '--',
@@ -122,13 +123,15 @@ export async function normalize(file) {
       page: 0,
     })
       .autoOrient()
+      .resize(maxSide, maxSide, { fit: 'inside', withoutEnlargement: true })
       .toColourspace('srgb')
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    const png = await sharp(data, { raw: info }).png().toBuffer();
+    const image = await sharp(data, { raw: info })
+      .jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toBuffer();
     return {
-      png,
+      image,
       width: info.width,
       height: info.height,
       sha: hash(input),
@@ -140,6 +143,19 @@ export async function normalize(file) {
 }
 
 export class Media {
+  // Imports and complete render jobs share one decoder budget across all frames.
+  work(job) {
+    const result = this.workChain.then(job);
+    this.workChain = result.catch(() => {});
+    return result;
+  }
+
+  requireImportSpace() {
+    const space = fs.statfsSync(this.root);
+    if (space.bavail * space.bsize < MIN_FREE)
+      throw fail('Zu wenig Speicherplatz. Import pausiert; mindestens 256 MiB freigeben.', 507);
+  }
+
   async ingest(
     file,
     {
@@ -153,9 +169,9 @@ export class Media {
       artwork = null,
     } = {},
   ) {
-    // One converter/decoder at a time, across requests and integrations.
-    const job = this.ingestion.then(async () => {
-      const n = await normalize(file);
+    return this.work(async () => {
+      this.requireImportSpace();
+      const n = await normalize(file, 2 * Math.max(this.base.panel.width, this.base.panel.height));
       const twin = this.s.pictures.find(
         (p) => p.pixelHash === n.pixelHash || p.sha === n.sha,
       );
@@ -163,11 +179,11 @@ export class Media {
       const dir = path.join(
         this.root,
         'media',
-        pictureId.replace(/[^\w-]/g, '_'),
+        hash(pictureId),
       );
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(path.join(dir, 'image.png'), n.png, { mode: 0o600 });
-      await sharp(n.png)
+      fs.writeFileSync(path.join(dir, 'image.jpg'), n.image, { mode: 0o600 });
+      await sharp(n.image)
         .resize(600, 600, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 85 })
         .toFile(path.join(dir, 'thumb.jpg'));
@@ -199,7 +215,7 @@ export class Media {
         identity: twin?.identity || twin?.id || pictureId,
         pixelHash: n.pixelHash,
         sha: n.sha,
-        file: path.join(dir, 'image.png'),
+        file: path.join(dir, 'image.jpg'),
         thumb: path.join(dir, 'thumb.jpg'),
         status:
           accepted || (this.s.settings.autoAccept && !hints.length)
@@ -219,11 +235,10 @@ export class Media {
       this.save();
       return p;
     });
-    this.ingestion = job.catch(() => {});
-    return job;
   }
 
   async upload(req) {
+    this.requireImportSpace();
     const dir = fs.mkdtempSync(path.join(this.root, 'upload-'));
     const files = [];
     const writes = [];
@@ -317,6 +332,10 @@ export class Media {
   }
 
   async renderPicture(p, cfg, target) {
+    return this.work(() => this.renderPictureLocked(p, cfg, target));
+  }
+
+  async renderPictureLocked(p, cfg, target) {
     const width = cfg.panel.width;
     const height = cfg.panel.height;
     let png;

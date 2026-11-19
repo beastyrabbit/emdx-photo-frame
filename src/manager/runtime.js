@@ -102,7 +102,7 @@ export class Runtime {
   }
   async prepare(f) {
     if (this.preparations.has(f.id)) return this.preparations.get(f.id);
-    // Bound decoder/render memory across all frames in the 1 GiB container.
+    // Serialize preparation bookkeeping; pixel work shares Media.work with imports.
     const promise = (this.prepareChain || Promise.resolve())
       .then(() => this.prepareLocked(f))
       .finally(() => this.preparations.delete(f.id));
@@ -167,8 +167,18 @@ export class Runtime {
         )
           chosen = { pictureId: pid, force: event.sameOnAll };
       }
-      if (!chosen && i === 0 && f.current?.pictureId)
-        chosen = { pictureId: f.current.pictureId, preserve: true, force: f.current.force };
+      if (!chosen && i === 0 && f.current?.pictureId) {
+        // A buffered picture can become current after it was deleted or paused.
+        // Prefer the next usable buffered card, then an earlier one if the pool is short.
+        const buffered = [...(f.plan || []), ...(f.delivered?.entries || [])];
+        const current = [f.current, ...buffered.filter((e) => e.at > now), ...buffered].find((entry) => {
+          const picture = this.s.pictures.find((p) => p.id === entry.pictureId);
+          return picture?.status === 'accepted' && !picture.paused &&
+            (entry.force || !this.owners(entry.pictureId).some((owner) => owner !== f.id));
+        });
+        if (current)
+          chosen = { pictureId: current.pictureId, preserve: true, force: current.force };
+      }
       if (!chosen && !event) {
         // Downloaded manual slots remain in order until their actual display time.
         const old = (f.delivered?.entries || []).find(
@@ -359,6 +369,10 @@ export class Runtime {
     return schedule;
   }
   async renderCard(f, kind, file) {
+    return this.work(() => this.renderCardLocked(f, kind, file));
+  }
+
+  async renderCardLocked(f, kind, file) {
     const cfg = this.apps.get(f.id).cfg;
     const { width, height } = cfg.panel;
     const lines = [
@@ -438,7 +452,7 @@ export class Runtime {
       kind: 'wechsel',
       text: entry.pictureId
         ? `${this.picture(entry.pictureId).title}: Wechsel laut übertragenem Zeitplan`
-        : `${entry.card}: laut übertragenem Zeitplan`,
+        : `${entry.card || 'Übernommenes Bild'}: laut übertragenem Zeitplan`,
     });
     return true;
   }
@@ -609,7 +623,15 @@ export class Runtime {
           changeId: null,
           tail: true,
         });
+      // A failed rebuild can leave prepared files for pictures that are no longer allowed.
+      const eligible = () => entries.every((entry) => {
+        if (!entry.pictureId) return true;
+        const picture = this.s.pictures.find((p) => p.id === entry.pictureId);
+        return picture?.status === 'accepted' && !picture.paused &&
+          (entry.force || !this.owners(entry.pictureId).some((owner) => owner !== f.id));
+      });
       if (
+        !eligible() ||
         prepared.cutoff.some(
           (pid) => this.s.pending.find((p) => p.id === pid)?.withdrawn,
         )
@@ -682,6 +704,7 @@ export class Runtime {
             },
             beforeSend: async (device, battery) => {
               await this.applySettings(f, selected, device, battery);
+              if (!eligible()) throw fail('Bilder sind nicht mehr zur Übertragung freigegeben.', 409);
               for (const entry of entries)
                 if (entry.pictureId) this.reserve(entry.pictureId, f.id, entry.force);
               commanded = true;
@@ -868,7 +891,17 @@ export class Runtime {
     }
     // Render ahead, without consuming the short wake window. Already-ready legacy slots survive migration.
     if (!f.prepared || f.dirty) {
-      await this.prepare(f);
+      try {
+        await this.prepare(f);
+      } catch (err) {
+        if (!f.prepared) throw err;
+        // A failed rebuild must not waste a wake when prepared files are still available.
+        f.preparing = null;
+        f.dirty = true;
+        f.prepareError = err.status
+          ? err.message
+          : 'Bilder konnten nicht neu vorbereitet werden. Vorhandener Vorrat wird weiterverwendet.';
+      }
       if (!f.prepared) return;
     }
     f.lastProbe = now;
