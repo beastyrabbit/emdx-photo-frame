@@ -1,7 +1,7 @@
 import type {
   AccessKey,
+  ArtPage,
   ArtQuery,
-  ArtWork,
   ComboLayout,
   ConnectionTest,
   Crop,
@@ -24,6 +24,7 @@ import type {
   Orientation,
   Overview,
   PendingChange,
+  PhotoQuery,
   Picture,
   PowerMode,
   ShowPlan,
@@ -94,9 +95,12 @@ export interface PhotoFrameApi {
   subscribeAlbum(albumId: string, on: boolean): Promise<void>
 
   // art catalogue (only used while `HouseSettings.extras.art` is on)
-  searchArt(query: ArtQuery): Promise<ArtWork[]>
+  searchArt(query: ArtQuery): Promise<ArtPage>
   /** Copies works into the Eingang, like `importFromImmich`. */
   importArt(workIds: string[]): Promise<void>
+  /** CC0 photos from the WordPress Photo Directory, on the same screen as the art. */
+  searchPhotos(query: PhotoQuery): Promise<ArtPage>
+  importPhotos(photoIds: string[]): Promise<void>
 
   // settings
   getSettings(): Promise<HouseSettings>

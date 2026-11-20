@@ -30,6 +30,7 @@ We merge upstream changes from the `upstream` remote from time to time. Generic 
 | Phone uploads, HEIC decoding, Eingang, crop and albums | implemented |
 | Calendar-day cadence and hourly windows | implemented; existing 06:00–00:00 schedule adopted |
 | Immich 3.4.x copies and album subscriptions, public-domain art | implemented; Immich key needed for use |
+| Art searched at the Met, Cleveland, SMK and Wikimedia Commons, CC0 photos from the WordPress Photo Directory | implemented; no keys |
 | React web interface and upstream fallback at `/alt` | implemented; cleaning writes still need supervised hardware qualification |
 | Samsung "Custom App" content source (our own app on the frame) | tested 19 November 2026 and shelved: the frame installs only Samsung-signed packages. Frames on mains power use the normal "Mobile" source with network standby on instead. |
 

@@ -1,7 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api } from "./index"
-import type { ArtQuery, ImmichQuery, Orientation } from "./types"
+import type { ArtPage, ArtQuery, ImmichQuery, Orientation, PhotoQuery } from "./types"
 
 // Live data is asked for again every few seconds, like today's status page does.
 const LIVE = { refetchInterval: 4000 }
@@ -24,8 +24,18 @@ export const useEvents = () => useQuery({ queryKey: ["events"], queryFn: api.lis
 export const useImmich = () => useQuery({ queryKey: ["immich"], queryFn: api.getImmich })
 export const useImmichSearch = (query: ImmichQuery) =>
   useQuery({ queryKey: ["immich-search", query], queryFn: () => api.searchImmich(query), placeholderData: (prev) => prev })
-export const useArtSearch = (query: ArtQuery, enabled = true) =>
-  useQuery({ queryKey: ["art-search", query], queryFn: () => api.searchArt(query), placeholderData: (prev) => prev, enabled })
+// Works and photos come a page at a time; "Mehr laden" asks for the next.
+const pages = <Q extends { cursor?: string | null }>(key: string, query: Q, fn: (q: Q) => Promise<ArtPage>, enabled: boolean) =>
+  useInfiniteQuery({
+    queryKey: [key, query],
+    queryFn: ({ pageParam }) => fn({ ...query, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: ArtPage) => last.next,
+    placeholderData: (prev) => prev,
+    enabled,
+  })
+export const useArtSearch = (query: ArtQuery, enabled = true) => pages("art-search", query, api.searchArt, enabled)
+export const usePhotoSearch = (query: PhotoQuery, enabled = true) => pages("photo-search", query, api.searchPhotos, enabled)
 export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api.getSettings })
 export const useKeys = () => useQuery({ queryKey: ["keys"], queryFn: api.listKeys })
 export const useHistory = (frameId?: string) => useQuery({ queryKey: ["history", frameId ?? "alle"], queryFn: () => api.listHistory(frameId), ...LIVE })

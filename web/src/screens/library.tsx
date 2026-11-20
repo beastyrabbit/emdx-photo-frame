@@ -1,6 +1,7 @@
 import { cn } from "cn"
 import {
   Bookmark,
+  Camera,
   Check,
   CircleDashed,
   CloudDownload,
@@ -73,6 +74,7 @@ const SOURCES: IconOption[] = [
   { value: "upload", label: "Hochgeladen", icon: Upload },
   { value: "immich", label: "Immich", icon: CloudDownload },
   { value: "kunst", label: "Kunst", icon: Palette },
+  { value: "foto", label: "Fotos", icon: Camera },
   { value: "erzeugt", label: "Erzeugt", icon: WandSparkles },
 ]
 

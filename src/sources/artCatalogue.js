@@ -152,13 +152,19 @@ async function getJson(url, timeoutMs) {
 const api = (baseUrl, path) => `${String(baseUrl || ART_URL).replace(/\/+$/, '')}${path}`;
 
 // A page of public-domain artworks: the curators' top picks (rating 5), or with `q` everything
-// that matches it. Returns { items, total, next }: `next` is the offset to go on from (null: that
-// was all); `total` counts what the catalogue has, icons included, so it is an upper bound.
-export async function searchArt({ baseUrl, q = '', offset = 0, limit = 60, timeoutMs = 30000 } = {}) {
+// that matches it (only top picks with `topPicks`). `source` ("wikimedia", "met", "artic") asks the
+// catalogue for one collection only: filtering a page afterwards would leave it nearly empty.
+// Returns { items, total, next }: `next` is the offset to go on from (null: that was all); `total`
+// counts what the catalogue has, icons included, so it is an upper bound.
+export async function searchArt({ baseUrl, q = '', offset = 0, limit = 60, timeoutMs = 30000, source = null, topPicks = false } = {}) {
   const params = new URLSearchParams({ publicDomain: 'true', limit: String(Math.min(PAGE, limit)), offset: String(offset) });
   const words = squash(q).slice(0, 100);
   if (words) params.set('q', words);
-  else params.set('rating', '5');
+  if (!words || topPicks) params.set('rating', '5');
+  if (source) {
+    if (!SOURCES.includes(source)) throw Object.assign(new Error('Unknown collection'), { status: 400 });
+    params.set('source', source);
+  }
   const body = await getJson(api(baseUrl, `/api/artworks?${params}`), timeoutMs);
   const got = Array.isArray(body?.items) ? body.items : [];
   const total = Number(body?.total) || 0;
