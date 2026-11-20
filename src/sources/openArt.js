@@ -207,6 +207,14 @@ const smk = {
 // --- Wikimedia Commons: public-domain reproductions of art (template PD-Art) ---------------------
 
 const COMMONS = 'https://commons.wikimedia.org/w/api.php';
+// MediaWiki answers its own errors with HTTP 200 and an `error` object: read as an empty page,
+// Commons would count as searched to the end instead of as not answering.
+async function commonsQuery(params, opts) {
+  const { body } = await getJson(`${COMMONS}?${params}`, NAMES.wikimedia, opts);
+  if (body?.error) throw new Error(`${NAMES.wikimedia} hat gerade Probleme (${String(body.error.code || 'Fehler').slice(0, 40)})`);
+  return body;
+}
+
 const commonsParams = () =>
   new URLSearchParams({
     action: 'query', format: 'json', formatversion: '2', prop: 'imageinfo',
@@ -237,7 +245,7 @@ const commons = {
     params.set('gsrsearch', `${q} filetype:bitmap hastemplate:PD-Art`);
     params.set('gsrlimit', String(PAGE));
     params.set('gsroffset', String(cursor));
-    const { body } = await getJson(`${COMMONS}?${params}`, NAMES.wikimedia, opts);
+    const body = await commonsQuery(params, opts);
     const pages = [...(body?.query?.pages || [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
     const next = Number(body?.continue?.gsroffset);
     return { items: pages.map(tidyCommons).filter(Boolean), next: Number.isInteger(next) && next > cursor ? next : null };
@@ -245,7 +253,7 @@ const commons = {
   async get(key, opts) {
     const params = commonsParams();
     params.set('pageids', key);
-    return tidyCommons((await getJson(`${COMMONS}?${params}`, NAMES.wikimedia, opts)).body?.query?.pages?.[0]);
+    return tidyCommons((await commonsQuery(params, opts))?.query?.pages?.[0]);
   },
 };
 

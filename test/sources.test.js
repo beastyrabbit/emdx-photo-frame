@@ -125,3 +125,18 @@ test('a Met refusal part-way through a page keeps what came and still names the 
   assert.deepEqual(page.failed, ['Met']);
   assert.equal(JSON.parse(page.next).met, 6);
 });
+
+test('a Commons API error is a failure to name and retry, not an empty last page', async (t) => {
+  stubFetch(t, (u) => {
+    if (u.host === 'commons.wikimedia.org') return { error: { code: 'maxlag', info: 'Waiting for a database server' } };
+    if (u.host === 'openaccess-api.clevelandart.org') return { info: { total: 1 }, data: [cmaWork(10)] };
+    if (u.host === 'collectionapi.metmuseum.org') return { total: 0, objectIDs: [] };
+    if (u.host === 'api.smk.dk') return { found: 0, items: [] };
+    throw new Error(`unexpected ${u}`);
+  });
+  const page = await searchOpenArt({ q: 'tulips' }); // another word than above: the Met's search list is cached
+  assert.deepEqual(page.items.map((w) => w.id), ['cleveland:10']);
+  assert.deepEqual(page.failed, ['Wikimedia Commons']);
+  assert.notEqual(page.next, null);
+  assert.equal(JSON.parse(page.next).wikimedia, undefined); // asked again from the start
+});
