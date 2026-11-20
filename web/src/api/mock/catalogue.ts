@@ -9,6 +9,9 @@ const LICENCE: Record<ArtWork["source"], string> = {
   met: "CC0, Open Access",
   aic: "CC0, gemeinfrei",
   wikimedia: "Gemeinfrei (Public Domain Mark)",
+  cleveland: "CC0",
+  smk: "Gemeinfrei",
+  wordpress: "CC0",
 }
 
 const ROWS: Row[] = [
@@ -246,5 +249,8 @@ export const CATALOGUE: (Omit<ArtWork, "taken"> & { words: string })[] = ROWS.ma
 export const ART_SOURCE_NAME: Record<ArtWork["source"], string> = {
   wikimedia: "Wikimedia Commons",
   met: "Metropolitan Museum of Art",
+  cleveland: "Cleveland Museum of Art",
+  smk: "SMK",
   aic: "Art Institute of Chicago",
+  wordpress: "WordPress-Fotoverzeichnis",
 }

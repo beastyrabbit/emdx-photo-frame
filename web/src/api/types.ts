@@ -204,7 +204,7 @@ export interface DiscardedItem extends InboxItem {
   keptUntil: number
 }
 
-export type PictureSource = "upload" | "immich" | "kunst" | "erzeugt"
+export type PictureSource = "upload" | "immich" | "kunst" | "erzeugt" | "foto"
 export type ComboLayout = "2-nebeneinander" | "3-nebeneinander" | "2-uebereinander" | "2x2"
 export type Hint = "zu-klein" | "unscharf" | "doppelt"
 
@@ -442,7 +442,8 @@ export interface HouseSettings {
   extras: { generate: boolean; art: boolean }
 }
 
-export type ArtSource = "wikimedia" | "met" | "aic"
+/** Where a work comes from. "aic" only on works taken from the old catalogue choice; "wordpress" is the photo directory. */
+export type ArtSource = "wikimedia" | "met" | "cleveland" | "smk" | "aic" | "wordpress"
 
 /** Who made a work of art and where its picture comes from. Stays with the picture after it is taken over. */
 export interface ArtCredit {
@@ -454,7 +455,7 @@ export interface ArtCredit {
   licence: string
 }
 
-/** A public-domain work in the art catalogue (paperlesspaper). */
+/** A public-domain work (a museum, Commons or the paperlesspaper catalogue), or a CC0 photo. */
 export interface ArtWork extends ArtCredit {
   id: string
   title: string
@@ -463,6 +464,8 @@ export interface ArtWork extends ArtCredit {
   height: number
   /** One of the catalogue's top picks. */
   topPick: boolean
+  /** The picture is shorter than 1440 pixels on its short side: a frame would enlarge it. */
+  small?: boolean
   /** Already in the Eingang or the library. */
   taken: boolean
 }
@@ -473,6 +476,21 @@ export interface ArtQuery {
   /** Only works whose shape suits frames of this format. */
   fits?: Orientation
   topPicks?: boolean
+  /** The `next` of the page before. */
+  cursor?: string | null
+}
+
+export interface PhotoQuery {
+  text?: string
+  fits?: Orientation
+  cursor?: string | null
+}
+
+/** One page of works or photos. `failed` names collections that did not answer this time. */
+export interface ArtPage {
+  items: ArtWork[]
+  next: string | null
+  failed: string[]
 }
 
 export interface FrameSettingsPatch {

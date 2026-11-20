@@ -165,11 +165,11 @@ export function SettingsScreen() {
               text={
                 s.extras.art ? (
                   <>
-                    Eingeschaltet: <Link to="/kunst">Kunst</Link> steht in der Navigation, und jede <Link to="/gruppen">Gruppe</Link> kann Kunstwerke
-                    untermischen.
+                    Eingeschaltet: <Link to="/kunst">Kunst</Link> steht in der Navigation, mit Kunstwerken und freien Fotos, und jede{" "}
+                    <Link to="/gruppen">Gruppe</Link> kann Kunstwerke untermischen.
                   </>
                 ) : (
-                  "Gemeinfreie Kunstwerke aus Museen suchen und in den Eingang holen. Eingeschaltet erscheint „Kunst“ in der Navigation."
+                  "Gemeinfreie Kunstwerke aus Museen und freie Fotos suchen und in den Eingang holen. Eingeschaltet erscheint „Kunst“ in der Navigation."
                 )
               }
             >

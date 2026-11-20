@@ -39,6 +39,38 @@ range for extra battery use. Neither a downloaded picture nor a cadence is
 reported as visually confirmed on the panel. Cleaning settings are checked
 by MDC read-back; this write path still needs supervised hardware testing.
 
+## Art and photos
+
+With "Kunstkatalog" switched on in Einstellungen, the "Kunst" area finds
+public-domain works and free photos and copies the chosen ones into the
+Eingang. None of the sources needs a key.
+
+- **Kunstwerke**: a search asks the Metropolitan Museum (paintings), the
+  Cleveland Museum of Art, SMK in Copenhagen and Wikimedia Commons (files
+  marked PD-Art) directly, and the results take turns. One collection can be
+  chosen on its own. Without a search word, and with "Auswahl des Katalogs",
+  the curated top picks of the paperlesspaper catalogue are shown; a single
+  museum shows its paintings instead.
+- **Fotos**: CC0 photos from the WordPress Photo Directory. Openverse orders
+  the search results; when Openverse refuses (it allows 20 anonymous requests
+  a minute and 200 a day), the directory's own search answers. Without a
+  search word the newest photos are shown.
+
+All of these search best in English ("flowers", not "Blumen"). "Mehr laden"
+fetches the next page. A collection that does not answer is named above the
+results, and the next "Mehr laden" asks it again. The Met refuses requests
+for a minute or so after a burst; the other collections still answer.
+Pictures shorter than 1440 pixels on their short side are marked, since the
+frame would enlarge them. Works taken from the old Art Institute of Chicago
+choice keep their credit.
+
+The service needs outbound HTTPS to `collectionapi.metmuseum.org`,
+`images.metmuseum.org`, `openaccess-api.clevelandart.org`,
+`openaccess-cdn.clevelandart.org`, `api.smk.dk`, `iip.smk.dk`,
+`iip-thumb.smk.dk`, `commons.wikimedia.org`, `upload.wikimedia.org`,
+`api.openverse.org`, `wordpress.org`, `pd.w.org` and
+`art.paperlesspaper.de`.
+
 ## Runtime configuration
 
 Existing `EMDX_*`, `PHOTO_DIR`, schedule, panel, server and sleep settings seed

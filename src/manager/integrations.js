@@ -9,6 +9,16 @@ import {
   downloadArt,
   topPicks,
 } from '../sources/artCatalogue.js';
+import {
+  searchOpenArt,
+  getOpenArt,
+  OPEN_ART_ID,
+} from '../sources/openArt.js';
+import { searchPhotos, getPhoto } from '../sources/photos.js';
+
+// The collections the "Kunst" area can be limited to. "aic" (the catalogue's 25 Chicago works)
+// is gone from the choice; works taken from it keep their credit.
+const ART_SOURCES = ['wikimedia', 'met', 'cleveland', 'smk'];
 
 export class Immich {
   constructor(url, key, fetcher = fetch) {
@@ -369,39 +379,115 @@ export class Integrations {
       this.polling = false;
     }
   }
+  // A page of works for the "Kunst" area. With a search word the museums and Commons answer
+  // directly; without one, and for "Auswahl des Katalogs", the paperlesspaper catalogue's top picks.
   async searchArt(query = {}) {
-    if (!this.s.settings.extras.art) return [];
-    const result = await searchArt({
-      baseUrl: this.base.art.baseUrl,
-      q: query.text || '',
-      offset: query.offset || 0,
-      limit: 60,
-    });
-    const items = result.items.filter(
-      (p) =>
-        (!query.source ||
-          p.source === (query.source === 'aic' ? 'artic' : query.source)) &&
-        (!query.fits || (p.height > p.width ? 'hoch' : 'quer') === query.fits),
-    );
-    for (const p of items) this.artCache.set(p.id, p);
-    return items.map((p) => ({
-      id: p.id,
-      workId: p.id,
-      title: p.title,
-      artist: p.artist,
-      date: p.date,
-      source: p.source === 'artic' ? 'aic' : p.source,
-      licence: p.license,
-      width: p.width,
-      height: p.height,
-      topPick: true,
-      taken: this.s.pictures.some((x) => x.ref === p.id),
-      art: {
-        motif: 'real',
-        variant: 0,
-        url: `/api/v1/art/thumbnail/${encodeURIComponent(p.id)}`,
-      },
-    }));
+    if (!this.s.settings.extras.art) return { items: [], next: null, failed: [] };
+    const text = String(query.text || '').trim();
+    const source = query.source || null;
+    if (source && !ART_SOURCES.includes(source)) throw fail('Unbekannte Sammlung');
+    const fromCatalogue = query.topPicks || (!text && (!source || source === 'wikimedia'));
+    let page;
+    try {
+      if (fromCatalogue) {
+        const offset = Math.max(0, Math.floor(Number(query.cursor)) || 0);
+        const catalogueSource = source === 'met' || source === 'wikimedia' ? source : null;
+        const result =
+          source && !catalogueSource
+            ? { items: [], next: null }
+            : await searchArt({
+                baseUrl: this.base.art.baseUrl,
+                q: text,
+                offset,
+                limit: 60,
+                source: catalogueSource,
+                topPicks: true,
+              });
+        page = {
+          items: result.items.map((p) => ({ ...p, topPick: true })),
+          next: result.next === null ? null : String(result.next),
+          failed: [],
+        };
+      } else
+        page = await searchOpenArt({ source, q: text, cursor: query.cursor || null });
+    } catch (err) {
+      throw fail(err.message, err.status === 400 ? 400 : 502);
+    }
+    return { ...page, items: this.offerWorks(page.items, query.fits) };
+  }
+  async searchPhotos(query = {}) {
+    if (!this.s.settings.extras.art) return { items: [], next: null, failed: [] };
+    let page;
+    try {
+      page = await searchPhotos({ q: query.text || '', cursor: query.cursor || null });
+    } catch (err) {
+      throw fail(err.message, err.status === 400 ? 400 : 502);
+    }
+    return { ...page, items: this.offerWorks(page.items, query.fits) };
+  }
+  // Works and photos as the screen shows them; the cache lets the thumbnail route and the import
+  // find them again without asking their source a second time.
+  offerWorks(items, fits) {
+    return items
+      .filter((p) => !fits || (p.height > p.width ? 'hoch' : 'quer') === fits)
+      .map((p) => {
+        this.artCache.set(p.id, p);
+        if (this.artCache.size > 2000)
+          this.artCache.delete(this.artCache.keys().next().value);
+        return {
+          id: p.id,
+          workId: p.id,
+          title: p.title,
+          artist: p.artist,
+          date: p.date,
+          source: p.source === 'artic' ? 'aic' : p.source,
+          licence: p.license,
+          width: p.width,
+          height: p.height,
+          // Too small to fill the long side of a 2560 × 1440 panel without enlarging it.
+          small: p.sizeKnown !== false && Math.min(p.width, p.height) < 1440,
+          topPick: !!p.topPick,
+          taken: this.s.pictures.some((x) => x.ref === p.id),
+          art: {
+            motif: 'real',
+            variant: 0,
+            url: `/api/v1/art/thumbnail/${encodeURIComponent(p.id)}`,
+          },
+        };
+      });
+  }
+  async importPhotos(photoIds) {
+    if (!Array.isArray(photoIds) || photoIds.length > 50)
+      throw fail('Höchstens 50 Fotos auswählen');
+    for (const photoId of photoIds) {
+      if (this.s.pictures.some((p) => p.ref === photoId)) continue;
+      this.requireImportSpace();
+      const photo = this.artCache.get(photoId) || (await getPhoto(photoId));
+      if (photo.source !== 'wordpress') throw fail('Das ist kein Foto aus dem Verzeichnis');
+      const bytes = await downloadArt(photo.image, { maxBytes: MAX_FILE });
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-photo-'));
+      try {
+        const file = path.join(dir, id());
+        fs.writeFileSync(file, bytes, { mode: 0o600 });
+        await this.ingest(file, {
+          title: photo.title,
+          source: 'foto',
+          sourceNote: `Foto${photo.artist ? ` von ${photo.artist}` : ''}, WordPress-Fotoverzeichnis (CC0)`,
+          albums: ['Fotos'],
+          ref: photo.id,
+          // The same credit fields as a work of art, so the photographer stays named in the library.
+          artwork: {
+            workId: photo.id,
+            artist: photo.artist,
+            date: photo.date,
+            source: 'wordpress',
+            licence: photo.license,
+          },
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
   }
   async importArt(workIds, accepted = false) {
     if (!Array.isArray(workIds) || workIds.length > 50)
@@ -411,7 +497,10 @@ export class Integrations {
       this.requireImportSpace();
       const art =
         this.artCache.get(workId) ||
-        (await getArt({ baseUrl: this.base.art.baseUrl, id: workId }));
+        (OPEN_ART_ID.test(workId)
+          ? await getOpenArt(workId)
+          : await getArt({ baseUrl: this.base.art.baseUrl, id: workId }));
+      if (art.source === 'wordpress') throw fail('Fotos über „Fotos“ holen');
       const bytes = await downloadArt(art.image, { maxBytes: MAX_FILE });
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emdx-art-'));
       try {

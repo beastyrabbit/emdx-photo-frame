@@ -180,7 +180,8 @@ function FrameOverview({ f }: { f: FrameDetail }) {
           <p>{f.health.text} Unter „Änderungen für diesen Rahmen“ entscheidest du, welcher Wert gilt.</p>
         </Banner>
       )}
-      {f.charging && (
+      {/* Just after an update the server leaves a charging frame alone until its next change. */}
+      {f.charging && f.nextOnline.immediate && (
         <Banner level="plain" title="Lädt gerade">
           <p>Am Ladegerät bleibt der Rahmen erreichbar. Änderungen gehen sofort raus, „Jetzt zeigen“ dauert nur Sekunden.</p>
         </Banner>

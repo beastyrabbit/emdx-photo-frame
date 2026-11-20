@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams } from "react-router"
 import { api } from "@/api"
 import { useAct, useAlbums, useDiscardInbox, useGroups, useInbox, usePicture } from "@/api/hooks"
 import { useFrameMap, usePictureMap } from "@/api/lookups"
-import type { Art, Crop, Group, Orientation } from "@/api/types"
+import type { Art, Crop, Group, Orientation, PictureSource } from "@/api/types"
 import { Banner, Chip, Field, Hint, PageHead, Section, SettingRow } from "@/components/bits"
 import { FrameObject, PictureImage, Thumb } from "@/components/picture"
 import { Segmented } from "@/components/segmented"
@@ -33,6 +33,13 @@ import { ART_SOURCES } from "./art"
 import { whereText } from "./library"
 
 const AUTO: Crop = { x: 50, y: 50, zoom: 1, auto: true }
+const FROM: Record<PictureSource, string> = {
+  upload: "Hochgeladen",
+  immich: "Aus Immich",
+  kunst: "Aus dem Kunstkatalog",
+  erzeugt: "Aus einem Text erzeugt",
+  foto: "Aus dem Fotoverzeichnis",
+}
 const formatName = (o: Orientation) => (o === "hoch" ? "Hochformat" : "Querformat")
 const other = (o: Orientation): Orientation => (o === "hoch" ? "quer" : "hoch")
 
@@ -426,8 +433,8 @@ function LibraryEdit({ id }: { id: string }) {
           </p>
         </div>
         <p className="text-small text-ink-soft">
-          {{ upload: "Hochgeladen", immich: "Aus Immich", kunst: "Aus dem Kunstkatalog", erzeugt: "Aus einem Text erzeugt" }[p.source]}, {p.width} × {p.height}{" "}
-          Punkte.{p.artwork ? ` ${p.artwork.artist}, ${p.artwork.date}. ${ART_SOURCES[p.artwork.source]}, ${p.artwork.licence}.` : ""}
+          {FROM[p.source]}, {p.width} × {p.height} Punkte.
+          {p.artwork ? ` ${p.artwork.artist}, ${p.artwork.date}. ${ART_SOURCES[p.artwork.source]}, ${p.artwork.licence}.` : ""}
           {usedIn.length > 0 && (
             <>
               {" "}

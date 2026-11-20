@@ -1214,8 +1214,11 @@ export const mockApi: PhotoFrameApi = {
         (!query.fits || bestFormat(w.width, w.height) === query.fits) &&
         (!query.topPicks || w.topPick),
     ).map(({ words: _w, ...w }) => ({ ...w, taken: taken.has(w.id) }))
-    return wait(found, 350)
+    return wait({ items: found, next: null, failed: [] }, 350)
   },
+  // The prototype has no photo directory: an empty page.
+  searchPhotos: () => wait({ items: [], next: null, failed: [] }, 350),
+  importPhotos: () => wait(undefined),
   async importArt(workIds) {
     const works = CATALOGUE.filter((w) => workIds.includes(w.id))
     for (const w of works) {

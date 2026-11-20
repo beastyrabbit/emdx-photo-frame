@@ -1761,3 +1761,31 @@ test('S14 settings and device checks work without pictures and still respect the
   assert.equal(await manager.deliver(frame), false);
   assert.equal(fake.events.length, before);
 });
+
+test('a delivery opens no second wake window seconds after the change it went out at', async (t) => {
+  const { manager, frame } = await setup(t);
+  const app = manager.apps.get(frame.id);
+  const clock = manager.clock(frame);
+  const prev = clock.prev(Date.now());
+  const now = prev + 60000;
+  const next = clock.next(now);
+  t.mock.method(Date, 'now', () => now);
+  // As deliver() leaves it: the first entry starts at the moment of delivery, 3 s after the change.
+  frame.delivered = {
+    id: 'p',
+    builtAt: prev + 3000,
+    entries: [
+      { at: prev + 3000, durationMs: next - prev - 3000, pictureId: null, file: 'a.png' },
+      { at: next, durationMs: 3600000, pictureId: null, file: 'b.png' },
+    ],
+  };
+  frame.current = { pictureId: null, entryFile: 'a.png' };
+  frame.lastDue = prev;
+  frame.wakeUntil = null;
+  manager.preparations.set(frame.id, Promise.resolve()); // tick stops before it looks for the frame
+  const changes = app.state.playlist.changes.length;
+  await manager.tick(frame);
+  assert.equal(app.state.playlist.changes.length, changes);
+  assert.equal(frame.wakeUntil, null);
+  assert.equal(frame.lastDue, prev);
+});

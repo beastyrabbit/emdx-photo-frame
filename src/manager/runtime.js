@@ -832,8 +832,15 @@ export class Runtime {
       this.save();
     }
     const prev = this.clock(f).prev(now);
+    // The first entry of a delivered program starts at the moment of delivery, while the frame is
+    // awake anyway: it is not a change the frame has to wake up for. Counting it opened a second
+    // wake window seconds after the real change, which the guard then never saw: a false
+    // "Wechsel verpasst" after every delivery.
     const deliveredTimes =
-      f.delivered?.entries.filter((e) => e.at <= now).map((e) => e.at) || [];
+      f.delivered?.entries
+        .slice(1)
+        .filter((e) => e.at <= now)
+        .map((e) => e.at) || [];
     const latest = Math.max(prev || 0, ...deliveredTimes);
     if (f.lastDue === undefined) f.lastDue = latest;
     if (latest > f.lastDue) {
