@@ -123,7 +123,8 @@ const met = {
       const refused = got.find((r) => r.status === 'rejected' && r.reason.status !== 404);
       if (refused) {
         if (!items.length) throw refused.reason;
-        break;
+        // What came is shown; the Met is still named as not answering, and "load more" goes on here.
+        return { items: items.filter(Boolean), next: at, refused: true };
       }
       for (const r of got) if (r.status === 'fulfilled') items.push(tidyMet(r.value));
     }
@@ -272,8 +273,8 @@ export async function searchOpenArt({ source, q = '', cursor = null } = {}, opts
   const results = await Promise.allSettled(
     asked.map((n) => ADAPTERS[n].page({ q: words, cursor: Math.max(0, Math.floor(Number(at[n])) || 0) }, opts)),
   );
-  const failed = asked.filter((_, i) => results[i].status === 'rejected');
-  if (asked.length && failed.length === asked.length) throw results[0].reason;
+  const failed = asked.filter((_, i) => results[i].status === 'rejected' || results[i].value.refused);
+  if (asked.length && results.every((r) => r.status === 'rejected')) throw results[0].reason;
   const pages = results.map((r) => (r.status === 'fulfilled' ? r.value : { items: [], next: null }));
   const next = { ...at };
   asked.forEach((n, i) => {

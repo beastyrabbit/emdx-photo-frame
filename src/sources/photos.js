@@ -54,24 +54,33 @@ async function directory({ q, page }, opts) {
   }
   const { body, headers } = await getJson(`${WP}?${params}&${embed}`, NAME, opts);
   const pages = Number(headers.get('x-wp-totalpages')) || 0;
-  return { items: (Array.isArray(body) ? body : []).map(tidyPhoto).filter(Boolean), next: page < pages ? String(page + 1) : null };
+  return { items: (Array.isArray(body) ? body : []).map(tidyPhoto).filter(Boolean), next: page < pages ? `wp:${page + 1}` : null, failed: [] };
 }
 
-/** One page of photos. `cursor` is the `next` of the page before. */
+async function openverse({ q, page }, opts) {
+  // Openverse gives anonymous callers at most 20 a page.
+  const params = new URLSearchParams({ q, source: 'wordpress', license: 'cc0', page_size: '20', page: String(page) });
+  const { body } = await getJson(`${OPENVERSE}?${params}`, 'Openverse', opts);
+  const slugs = (body?.results || []).map((r) => SLUG.exec(r.foreign_landing_url || '')?.[1]).filter(Boolean);
+  return { items: await bySlugs([...new Set(slugs)], opts), next: page < (Number(body?.page_count) || 0) ? `ov:${page + 1}` : null, failed: [] };
+}
+
+/**
+ * One page of photos. `cursor` is the `next` of the page before: "ov:2" or "wp:2", so a search
+ * stays with the source it started with (they order and page differently).
+ */
 export async function searchPhotos({ q = '', cursor = null } = {}, opts = {}) {
   const words = String(q ?? '').replace(/\s+/g, ' ').trim().slice(0, 100);
-  const page = Math.max(1, Math.floor(Number(cursor)) || 1);
-  if (!words) return { ...(await directory({ q: '', page }, opts)), failed: [] };
+  const [, via, n] = /^(ov|wp):(\d{1,4})$/.exec(String(cursor ?? '')) || [];
+  const page = Math.max(1, Number(n) || 1);
+  if (!words || via === 'wp') return directory({ q: words, page }, opts);
+  if (via === 'ov') return openverse({ q: words, page }, opts);
   try {
-    // Openverse gives anonymous callers at most 20 a page.
-    const params = new URLSearchParams({ q: words, source: 'wordpress', license: 'cc0', page_size: '20', page: String(page) });
-    const { body } = await getJson(`${OPENVERSE}?${params}`, 'Openverse', opts);
-    const slugs = (body?.results || []).map((r) => SLUG.exec(r.foreign_landing_url || '')?.[1]).filter(Boolean);
-    return { items: await bySlugs([...new Set(slugs)], opts), next: page < (Number(body?.page_count) || 0) ? String(page + 1) : null, failed: [] };
+    return await openverse({ q: words, page: 1 }, opts);
   } catch (err) {
     // Openverse is a help for the order, not a must: the directory's own search still finds them.
     if (err.message.startsWith(NAME)) throw err;
-    return { ...(await directory({ q: words, page }, opts)), failed: [] };
+    return directory({ q: words, page: 1 }, opts);
   }
 }
 

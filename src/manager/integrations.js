@@ -475,6 +475,14 @@ export class Integrations {
           sourceNote: `Foto${photo.artist ? ` von ${photo.artist}` : ''}, WordPress-Fotoverzeichnis (CC0)`,
           albums: ['Fotos'],
           ref: photo.id,
+          // The same credit fields as a work of art, so the photographer stays named in the library.
+          artwork: {
+            workId: photo.id,
+            artist: photo.artist,
+            date: photo.date,
+            source: 'wordpress',
+            licence: photo.license,
+          },
         });
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });

@@ -101,11 +101,27 @@ test('photos: Openverse orders, the directory names the files; without Openverse
   });
   const page = await searchPhotos({ q: 'flowers' });
   assert.deepEqual(page.items.map((p) => p.id), ['wpphoto:bbbbbb2222', 'wpphoto:aaaaaa1111']); // Openverse's order
-  assert.equal(page.next, '2');
+  assert.equal(page.next, 'ov:2');
   const p = page.items[0];
   assert.deepEqual([p.title, p.artist, p.license, p.image, p.thumb], ['Orange marigold flowers in the sun.', 'Balu B', 'CC0', 'https://pd.w.org/bbbbbb2222.jpg', 'https://pd.w.org/bbbbbb2222-768.jpg']);
   openverse = 429;
   const fallback = await searchPhotos({ q: 'flowers' });
   assert.deepEqual(fallback.items.map((x) => x.id), ['wpphoto:cccccc3333']);
   assert.equal(new URL(asked.at(-1)).searchParams.get('orderby'), 'relevance');
+  // Further pages stay with the source the search started with: no skipped or repeated photos.
+  await assert.rejects(() => searchPhotos({ q: 'flowers', cursor: 'ov:2' }), /Pause/);
+  await searchPhotos({ q: 'flowers', cursor: 'wp:2' });
+  assert.equal(new URL(asked.at(-1)).searchParams.get('page'), '2');
+});
+
+test('a Met refusal part-way through a page keeps what came and still names the Met', async (t) => {
+  let objects = 0;
+  stubFetch(t, (u) => {
+    if (u.pathname.endsWith('/search')) return { total: 40, objectIDs: Array.from({ length: 40 }, (_, i) => 100 + i) };
+    return ++objects > 6 ? 403 : metObject(Number(u.pathname.split('/').at(-1)), true);
+  });
+  const page = await searchOpenArt({ source: 'met', q: 'roses' });
+  assert.equal(page.items.length, 6);
+  assert.deepEqual(page.failed, ['Met']);
+  assert.equal(JSON.parse(page.next).met, 6);
 });

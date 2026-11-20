@@ -298,6 +298,11 @@ export function ArtScreen() {
             ))}
           </ul>
         )}
+        {found.isFetchNextPageError && (
+          <Banner level="warn" title="Weitere Treffer kamen nicht an">
+            <p>{found.error?.message} „Mehr laden“ versucht es noch einmal.</p>
+          </Banner>
+        )}
         {found.hasNextPage && (
           <Button variant="outline" className="justify-self-center" disabled={found.isFetchingNextPage} onClick={() => found.fetchNextPage()}>
             {found.isFetchingNextPage ? "Lädt …" : "Mehr laden"}
