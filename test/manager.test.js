@@ -908,7 +908,11 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
     else if (req.url.startsWith('/api/people'))
       res.end(
         JSON.stringify({
-          people: [{ id: 'person-1', name: 'Person', faceCount: 2 }],
+          people: [
+            { id: 'person-1', name: 'Person', faceCount: 2 },
+            { id: 'person-unnamed', name: '', isHidden: false },
+            { id: 'person-hidden', name: 'Versteckt', isHidden: true },
+          ],
           hasNextPage: false,
         }),
       );
@@ -971,6 +975,18 @@ test('Immich 3.4.2 metadata/smart cursor API, optional people, edited import and
   manager.saveKey('immich', 'fixture-key');
   const status = await manager.getImmich();
   assert.equal(status.connected, true);
+  assert.deepEqual(
+    status.people.map((p) => p.id),
+    ['person-1'],
+  );
+  const searched = await manager.searchImmich({});
+  assert.equal(searched.items.length, 1);
+  assert.equal(searched.nextCursor, 'opaque-cursor');
+  const uiSearch = requests
+    .filter((r) => r.url === '/api/search/metadata')
+    .at(-1).body;
+  assert.equal(uiSearch.orderBy.direction, 'desc');
+  assert.equal(search.orderBy.direction, 'asc');
   await manager.importFromImmich(['asset-1']);
   assert.equal(
     manager.listInbox().filter((p) => p.source === 'immich').length,

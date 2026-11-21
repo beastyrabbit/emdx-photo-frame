@@ -51,7 +51,8 @@ export function ImmichScreen() {
     (_r, a) => (a.on ? "Album abonniert" : "Abo beendet"),
   )
   const toggle = (id: string) => setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
-  const fresh = (found.data ?? []).filter((a) => !a.imported)
+  const list = found.data ? Array.from(new Map(found.data.pages.flatMap((p) => p.items).map((item) => [item.id, item])).values()) : undefined
+  const fresh = (list ?? []).filter((a) => !a.imported)
 
   if (immich.isError || (immich.data && !immich.data.connected)) {
     return (
@@ -113,22 +114,26 @@ export function ImmichScreen() {
       )}
 
       <div className="grid gap-2">
-        {/* The label sits above the row: inside it, it scrolled under the first chip on the phone. */}
-        <span className="-mb-1 text-small text-ink-soft" aria-hidden>
-          Personen
-        </span>
-        <ChipRow label="Personen">
-          {immich.data?.people.map((p) => (
-            <Chip
-              key={p.id}
-              pressed={people.includes(p.id)}
-              onClick={() => setPeople((cur) => (cur.includes(p.id) ? cur.filter((x) => x !== p.id) : [...cur, p.id]))}
-              count={p.count}
-            >
-              {p.name}
-            </Chip>
-          ))}
-        </ChipRow>
+        {(immich.data?.people.length ?? 0) > 0 && (
+          <>
+            {/* The label sits above the row: inside it, it scrolled under the first chip on the phone. */}
+            <span className="-mb-1 text-small text-ink-soft" aria-hidden>
+              Personen
+            </span>
+            <ChipRow label="Personen">
+              {immich.data?.people.map((p) => (
+                <Chip
+                  key={p.id}
+                  pressed={people.includes(p.id)}
+                  onClick={() => setPeople((cur) => (cur.includes(p.id) ? cur.filter((x) => x !== p.id) : [...cur, p.id]))}
+                  count={p.count || undefined}
+                >
+                  {p.name}
+                </Chip>
+              ))}
+            </ChipRow>
+          </>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Select value={album} onValueChange={setAlbum}>
             <SelectTrigger className="h-9 bg-surface text-[15px]" aria-label="Immich-Album">
@@ -166,7 +171,7 @@ export function ImmichScreen() {
         title={asked ? `Gefunden für „${asked}“` : "Bilder"}
         aside={
           <span className="flex items-center gap-3 text-small text-ink-soft">
-            {found.data ? plural(found.data.length, "Bild", "Bilder") : ""}
+            {list ? `${plural(list.length, "Bild", "Bilder")}${found.hasNextPage ? ", es gibt mehr" : ""}` : ""}
             {fresh.length > 0 && (
               <button
                 type="button"
@@ -179,20 +184,29 @@ export function ImmichScreen() {
           </span>
         }
       >
-        {!found.data ? (
+        {found.isError && !list ? (
+          <Empty title="Die Suche hat nicht geklappt">
+            <p className="text-ink-soft">{found.error.message}</p>
+          </Empty>
+        ) : !list ? (
           <div className="grid grid-cols-3 gap-2 min-[560px]:grid-cols-5 min-[900px]:grid-cols-7">
             {Array.from({ length: 14 }, (_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: fixed placeholders
               <Skeleton key={i} className="aspect-square w-full rounded-picture" />
             ))}
           </div>
-        ) : found.data.length === 0 ? (
+        ) : list.length === 0 && !found.hasNextPage ? (
           <Empty title="Nichts gefunden">
             <p className="text-ink-soft">Versuch ein anderes Wort oder nimm einen Filter heraus.</p>
           </Empty>
         ) : (
-          <ul className={cn("m-0 grid list-none grid-cols-3 gap-2 p-0 min-[560px]:grid-cols-5 min-[900px]:grid-cols-7", found.isFetching && "opacity-60")}>
-            {found.data.map((a) => {
+          <ul
+            className={cn(
+              "m-0 grid list-none grid-cols-3 gap-2 p-0 min-[560px]:grid-cols-5 min-[900px]:grid-cols-7",
+              found.isFetching && !found.isFetchingNextPage && "opacity-60",
+            )}
+          >
+            {list.map((a) => {
               const on = picked.includes(a.id)
               return (
                 <li key={a.id}>
@@ -219,6 +233,16 @@ export function ImmichScreen() {
               )
             })}
           </ul>
+        )}
+        {found.isFetchNextPageError && (
+          <Banner level="warn" title="Weitere Bilder kamen nicht an">
+            <p>{found.error?.message} „Mehr laden“ versucht es noch einmal.</p>
+          </Banner>
+        )}
+        {found.hasNextPage && (
+          <Button variant="outline" className="justify-self-center" disabled={found.isFetchingNextPage} onClick={() => found.fetchNextPage()}>
+            {found.isFetchingNextPage ? "Lädt …" : "Mehr laden"}
+          </Button>
         )}
       </Section>
 

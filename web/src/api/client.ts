@@ -15,7 +15,7 @@ import type {
   Group,
   HistoryEntry,
   HouseSettings,
-  ImmichAsset,
+  ImmichPage,
   ImmichQuery,
   ImmichStatus,
   InboxEdit,
@@ -90,7 +90,7 @@ export interface PhotoFrameApi {
 
   // Immich
   getImmich(): Promise<ImmichStatus>
-  searchImmich(query: ImmichQuery): Promise<ImmichAsset[]>
+  searchImmich(query: ImmichQuery): Promise<ImmichPage>
   importFromImmich(assetIds: string[], albums?: string[]): Promise<void>
   subscribeAlbum(albumId: string, on: boolean): Promise<void>
 

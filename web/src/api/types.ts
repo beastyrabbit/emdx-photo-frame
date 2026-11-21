@@ -566,6 +566,12 @@ export interface ImmichQuery {
   favorites?: boolean
   from?: number
   to?: number
+  cursor?: string | null
+}
+
+export interface ImmichPage {
+  items: ImmichAsset[]
+  nextCursor: string | null
 }
 
 export interface ImmichStatus {

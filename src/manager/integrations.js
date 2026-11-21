@@ -88,7 +88,7 @@ export class Immich {
       throw fail('Diese Integration braucht Immich 3.4.x.', 422);
     return `${v.major}.${v.minor}.${v.patch}`;
   }
-  async search(query, cursor) {
+  async search(query, cursor, { direction = 'asc' } = {}) {
     const filter = { type: { eq: 'IMAGE' } };
     if (query.albumId) filter.albumIds = { any: [query.albumId] };
     if (query.personIds?.length) filter.personIds = { any: query.personIds };
@@ -101,7 +101,7 @@ export class Immich {
     const smart = !!query.text?.trim() || !!query.queryAssetId;
     const body = {
       filter,
-      orderBy: { field: 'fileCreatedAt', direction: 'asc' },
+      orderBy: { field: 'fileCreatedAt', direction },
       size: 100,
       withExif: true,
       ...(cursor ? { cursor } : {}),
@@ -218,11 +218,16 @@ export class Integrations {
       for (let page = 1; page <= 20; page++) {
         const data = await client.request(`/people?page=${page}&size=500`);
         people.push(
-          ...(data.people || []).map((p) => ({
-            id: p.id,
-            name: p.name || 'Ohne Namen',
-            count: p.faceCount || 0,
-          })),
+          ...(data.people || [])
+            .filter(
+              (p) =>
+                !p.isHidden && typeof p.name === 'string' && p.name.trim(),
+            )
+            .map((p) => ({
+              id: p.id,
+              name: p.name.trim(),
+              count: Number(p.faceCount) || 0,
+            })),
         );
         if (!data.hasNextPage) break;
       }
@@ -245,7 +250,9 @@ export class Integrations {
   async searchImmich(query) {
     const client = this.immichClient();
     await client.version();
-    const page = await client.search(query, query.cursor);
+    const page = await client.search(query, query.cursor, {
+      direction: 'desc',
+    });
     return {
       items: page.items.map((p) => ({
         id: p.id,
