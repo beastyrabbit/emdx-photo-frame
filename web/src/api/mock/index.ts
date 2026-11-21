@@ -1167,7 +1167,10 @@ export const mockApi: PhotoFrameApi = {
         (!query.from || a.takenAt >= query.from) &&
         (!query.to || a.takenAt <= query.to + DAY),
     )
-    return wait(found, 350)
+    const offset = Math.max(0, Number(query.cursor) || 0)
+    const size = 60
+    const slice = found.slice(offset, offset + size)
+    return wait({ items: slice, nextCursor: offset + size < found.length ? String(offset + size) : null }, 350)
   },
   async importFromImmich(assetIds) {
     for (const a of db.immich.assets.filter((x) => assetIds.includes(x.id))) {

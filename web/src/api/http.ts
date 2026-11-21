@@ -1,5 +1,4 @@
 import type { PhotoFrameApi } from "./client"
-import type { ImmichAsset } from "./types"
 
 let csrf: Promise<string> | undefined
 async function token() {
@@ -87,19 +86,7 @@ export const httpApi: PhotoFrameApi = {
   endEvent: (id) => call("endEvent", [id], true),
   deleteEvent: (id) => call("deleteEvent", [id], true),
   getImmich: () => call("getImmich", []),
-  searchImmich: async (query) => {
-    const items: ImmichAsset[] = []
-    let cursor: string | null = null
-    const seen = new Set<string>()
-    do {
-      const page: { items: ImmichAsset[]; nextCursor: string | null } = await call("searchImmich", [{ ...query, cursor }])
-      items.push(...page.items)
-      cursor = page.nextCursor
-      if (cursor && seen.has(cursor)) throw new Error("Immich hat eine Seite wiederholt")
-      if (cursor) seen.add(cursor)
-    } while (cursor && seen.size < 100)
-    return items
-  },
+  searchImmich: (query) => call("searchImmich", [query]),
   importFromImmich: (ids, albums = []) => call("importFromImmich", [ids, albums], true),
   subscribeAlbum: (...args) => call("subscribeAlbum", args, true),
   searchArt: (query) => call("searchArt", [query]),

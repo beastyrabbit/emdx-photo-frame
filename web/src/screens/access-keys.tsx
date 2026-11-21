@@ -53,6 +53,12 @@ function KeyCard({ k }: { k: AccessKey }) {
         <StateMark level={status.level}>{status.text}</StateMark>
       </div>
       <p className="text-[15px]">{k.purpose}.</p>
+      {k.id === "immich" && (
+        <p className="text-small text-ink-soft">
+          Benötigte Rechte in Immich: <code>album.read</code>, <code>asset.read</code>, <code>asset.view</code>, <code>asset.download</code> und optional{" "}
+          <code>person.read</code> (für die Personen-Auswahl).
+        </p>
+      )}
       {k.later && <p className="text-[15px] text-ink-soft">Wird noch von nichts benutzt. Du kannst den Schlüssel schon hinterlegen.</p>}
       <p className="text-small text-ink-soft">
         {k.statusNote}

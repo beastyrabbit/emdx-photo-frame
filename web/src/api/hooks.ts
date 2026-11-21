@@ -23,7 +23,13 @@ export const useDiscarded = () => useQuery({ queryKey: ["discarded"], queryFn: a
 export const useEvents = () => useQuery({ queryKey: ["events"], queryFn: api.listEvents })
 export const useImmich = () => useQuery({ queryKey: ["immich"], queryFn: api.getImmich })
 export const useImmichSearch = (query: ImmichQuery) =>
-  useQuery({ queryKey: ["immich-search", query], queryFn: () => api.searchImmich(query), placeholderData: (prev) => prev })
+  useInfiniteQuery({
+    queryKey: ["immich-search", query],
+    queryFn: ({ pageParam }) => api.searchImmich({ ...query, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    placeholderData: (prev) => prev,
+  })
 // Works and photos come a page at a time; "Mehr laden" asks for the next.
 const pages = <Q extends { cursor?: string | null }>(key: string, query: Q, fn: (q: Q) => Promise<ArtPage>, enabled: boolean) =>
   useInfiniteQuery({

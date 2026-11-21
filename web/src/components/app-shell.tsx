@@ -1,5 +1,5 @@
 import { cn } from "cn"
-import { CalendarRange, CircleHelp, Frame, GalleryVerticalEnd, History, Images, Palette, SlidersHorizontal } from "lucide-react"
+import { CalendarRange, CircleHelp, CloudDownload, Frame, GalleryVerticalEnd, History, Images, Palette, PartyPopper, SlidersHorizontal } from "lucide-react"
 import { NavLink, Outlet, ScrollRestoration } from "react-router"
 import { useOverview, useSettings } from "@/api/hooks"
 
@@ -16,7 +16,9 @@ const ART: Item = { to: "/kunst", label: "Kunst", icon: Palette, wideOnly: true 
 const MAIN: Item[] = [
   { to: "/", label: "Übersicht", icon: Frame, end: true },
   { to: "/bibliothek", label: "Bibliothek", icon: Images },
+  { to: "/immich", label: "Immich", icon: CloudDownload, wideOnly: true },
   { to: "/zeitplan", label: "Zeitplan", icon: CalendarRange },
+  { to: "/events", label: "Events", icon: PartyPopper, wideOnly: true },
   { to: "/gruppen", label: "Gruppen", icon: GalleryVerticalEnd },
   { to: "/einstellungen", label: "Einstellungen", short: "Mehr", icon: SlidersHorizontal },
 ]
@@ -41,7 +43,7 @@ export function AppShell() {
   const inbox = data?.inboxCount ?? 0
   // "Kunst" is there only while the art catalogue is switched on in the settings.
   const art = useSettings().data?.extras.art ?? false
-  const main = art ? [...MAIN.slice(0, 2), ART, ...MAIN.slice(2)] : MAIN
+  const main = art ? [...MAIN.slice(0, 3), ART, ...MAIN.slice(3)] : MAIN
   return (
     <div className="min-h-dvh min-[900px]:pl-[216px]">
       <nav
